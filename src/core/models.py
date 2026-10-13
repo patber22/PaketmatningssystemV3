@@ -39,17 +39,21 @@ class ToFReading:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToFReading":
         """Skapar en ToFReading från en dictionary (t.ex. inläst från config.json)."""
-        if not data:
+        if not isinstance(data, dict):
             return cls()
-        return cls(
-            distance_mm=float(data.get("distance_mm", 0.0)),
-            is_valid=bool(data.get("is_valid", False)),
-            timestamp=float(data.get("timestamp", 0.0)),
-            samples=int(data.get("samples", 1)),
-            method=str(data.get("method", "median")),
-            zone=str(data.get("zone", "center")),
-            valid_zones=int(data.get("valid_zones", 0)),
-        )
+
+        try:
+            return cls(
+                distance_mm=float(data.get("distance_mm", 0.0)),
+                is_valid=bool(data.get("is_valid", False)),
+                timestamp=float(data.get("timestamp", 0.0)),
+                samples=int(data.get("samples", 1)),
+                method=str(data.get("method", "median")),
+                zone=str(data.get("zone", "center")),
+                valid_zones=int(data.get("valid_zones", 0)),
+            )
+        except (ValueError, TypeError):
+            return cls()
 
     def is_expired(self, max_age_hours: float = 168.0) -> bool:
         """
