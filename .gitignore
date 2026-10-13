@@ -1,0 +1,48 @@
+# ==============================================================================
+# Paketmätningssystem V3 — Git Ignore
+# ==============================================================================
+
+# 1. Byte-compiled / Python-genererade filer
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 2. Virtuella miljöer (Python venv)
+.venv/
+venv/
+env/
+ENV/
+matsystem-env/
+
+# 3. Editorer & Operativsystem
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+desktop.ini
+*.swp
+*.swo
+
+# 4. Lokala mätdata, loggar och testbilder (förhindrar tunga binärfiler i Git)
+*.log
+logs/
+test_images/
+captures/
+output/
+scratch/
+recordings/
+
+# 5. Lokala maskinspecifika konfigurationer
+*.local.json
+
+# 6. Intern affärsdokumentation, budget & personliga strategier (aldrig till GitHub)
+internal/
+private/
+notes/
+*BUDGET*
+*budget*
+*BUSINESS*
+*business*
+*IDEAS*
+*ideas*
+*.notes.md
