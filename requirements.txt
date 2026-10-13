@@ -1,0 +1,4 @@
+# ==============================================================================
+# Paketmätningssystem V3 — Dependencies
+# ==============================================================================
+# Paket läggs till och granskas inkrementellt i takt med att moduler byggs.
