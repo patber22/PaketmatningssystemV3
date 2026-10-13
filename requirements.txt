@@ -2,3 +2,6 @@
 # Paketmätningssystem V3 — Dependencies
 # ==============================================================================
 # Paket läggs till och granskas inkrementellt i takt med att moduler byggs.
+
+# Grundläggande numerisk matematik och matrishantering (används av ToF, Stereo, Normaler)
+numpy>=1.24.0
