@@ -23,7 +23,6 @@ class ToFReading:
     sample_method: str = "median"       # Tidsfilter: 'median', 'mean' eller 'min'
     zone: str = "center"                # Zon-urval: 'center', 'spot' eller 'all'
     zone_method: str = "median"         # Rumsfilter: 'median', 'mean' eller 'min'
-    method: str = "median"              # Bakåtkompatibel synonym för zone_method
     valid_zones: int = 0                # Antal zoner med godkänd hårdvarustatus
 
     def valid(self) -> bool:
@@ -50,7 +49,6 @@ class ToFReading:
             sample_method=sample_method,
             zone=zone,
             zone_method=zone_method,
-            method=zone_method,
             valid_zones=0,
         )
 
@@ -64,7 +62,6 @@ class ToFReading:
             "sample_method": self.sample_method,
             "zone": self.zone,
             "zone_method": self.zone_method,
-            "method": self.zone_method,
             "valid_zones": self.valid_zones,
         }
 
@@ -75,17 +72,14 @@ class ToFReading:
             return cls.invalid()
 
         try:
-            z_method = str(data.get("zone_method", data.get("method", "median")))
-            s_method = str(data.get("sample_method", "median"))
             return cls(
                 distance_mm=float(data.get("distance_mm", 0.0)),
                 is_valid=bool(data.get("is_valid", False)),
                 timestamp=float(data.get("timestamp", 0.0)),
                 samples=int(data.get("samples", 1)),
-                sample_method=s_method,
+                sample_method=str(data.get("sample_method", "median")),
                 zone=str(data.get("zone", "center")),
-                zone_method=z_method,
-                method=z_method,
+                zone_method=str(data.get("zone_method", "median")),
                 valid_zones=int(data.get("valid_zones", 0)),
             )
         except (ValueError, TypeError):
