@@ -137,20 +137,17 @@ class ToFSensor:
                 if self._driver.data_ready():
                     data = self._driver.get_data()
 
-                    # Om en mätorder är aktiv: spara undan matrisen
-                    if self._target_samples > 0:
-                        dist_8x8 = np.array(data.distance_mm, dtype=np.float32).reshape((8, 8))
-                        status_8x8 = np.array(data.target_status, dtype=np.uint8).reshape((8, 8))
+                    with self._lock:
+                        if self._target_samples > 0:
+                            dist_8x8 = np.array(data.distance_mm, dtype=np.float32).reshape((8, 8))
+                            status_8x8 = np.array(data.target_status, dtype=np.uint8).reshape((8, 8))
+                            self._collected_distances.append(dist_8x8)
+                            self._collected_statuses.append(status_8x8)
 
-                        with self._lock:
-                            if self._target_samples > 0:
-                                self._collected_distances.append(dist_8x8)
-                                self._collected_statuses.append(status_8x8)
-
-                                # Om vi nått önskat antal samples: slå på serveringsklockan!
-                                if len(self._collected_distances) >= self._target_samples:
-                                    self._target_samples = 0
-                                    self._order_event.set()
+                            # Om vi nått önskat antal samples: slå på serveringsklockan!
+                            if len(self._collected_distances) >= self._target_samples:
+                                self._target_samples = 0
+                                self._order_event.set()
 
                 time.sleep(sleep_interval)
             except Exception as e:
@@ -289,19 +286,12 @@ class ToFSensor:
         Läser av ToF-sensorn med tvåstegs brusreducering och returnerar en ToFReading:
           Steg 1: Samlar in N bildrutor och kör tidsfilter via read_matrix().
           Steg 2: Klipper ut önskad zon och beräknar slutligt millimeteravstånd via rumsfilter.
-        Om sensorn inte är igång eller mätningen misslyckas returneras ToFReading.invalid(...).
+        Om sensorn inte är igång eller mätningen misslyckas returneras ToFReading.invalid().
         """
-        samples = max(1, samples)
-
         # Steg 1: Hämta den tidsfiltrerade 8x8-matrisen
         matrix = self.read_matrix(samples=samples, sample_method=sample_method, timeout=timeout)
         if matrix is None:
-            return ToFReading.invalid(
-                samples=samples,
-                sample_method=sample_method,
-                zone=zone,
-                zone_method=zone_method
-            )
+            return ToFReading.invalid()
 
         # Steg 2: Rumsfilter över zonen
         zone_data = self._extract_zone(matrix, zone)
@@ -309,22 +299,17 @@ class ToFSensor:
 
         final_distance = self._aggregate(zone_data, zone_method)
         if final_distance <= 0.0 or valid_count == 0:
-            return ToFReading.invalid(
-                samples=samples,
-                sample_method=sample_method,
-                zone=zone,
-                zone_method=zone_method
-            )
+            return ToFReading.invalid()
 
         return ToFReading(
             distance_mm=final_distance,
-            is_valid=True,
             timestamp=time.time(),
-            samples=samples,
+            samples=max(1, samples),
             sample_method=sample_method,
             zone=zone,
             zone_method=zone_method,
             valid_zones=valid_count,
+            _is_valid=True,
         )
 
     def __enter__(self) -> "ToFSensor":
