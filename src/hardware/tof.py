@@ -8,6 +8,7 @@ Garanterar trådsäkerhet via en intern Mutex (threading.Lock).
 
 import time
 import threading
+import warnings
 from typing import Optional, Tuple
 import numpy as np
 
@@ -48,6 +49,12 @@ class ToFSensor:
         self._latest_distances: Optional[np.ndarray] = None
         self._latest_statuses: Optional[np.ndarray] = None
         self._latest_timestamp: float = 0.0
+
+        # Mätorder-synkronisering (servitör/kock)
+        self._target_samples: int = 0
+        self._collected_distances: list = []
+        self._collected_statuses: list = []
+        self._order_event = threading.Event()
 
         if auto_connect:
             self.connect()
@@ -109,6 +116,8 @@ class ToFSensor:
     def disconnect(self) -> None:
         """Stoppar bakgrundstråden och stänger I2C-kommunikationen säkert."""
         self._running = False
+        self._order_event.set()  # Väck eventuellt väntande read() så den inte blir hängande
+
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
             self._thread = None
@@ -143,6 +152,16 @@ class ToFSensor:
                         self._latest_distances = dist_8x8
                         self._latest_statuses = status_8x8
                         self._latest_timestamp = now
+
+                        # Om en mätorder är aktiv (servitören väntar på samples)
+                        if self._target_samples > 0:
+                            self._collected_distances.append(dist_8x8)
+                            self._collected_statuses.append(status_8x8)
+
+                            # Om vi nått önskat antal samples: slå på serveringsklockan!
+                            if len(self._collected_distances) >= self._target_samples:
+                                self._target_samples = 0
+                                self._order_event.set()
 
                 time.sleep(sleep_interval)
             except Exception as e:
@@ -187,60 +206,143 @@ class ToFSensor:
         if np.all(np.isnan(values)):
             return -1.0
 
-        match method.lower():
-            case "median":
-                return float(np.nanmedian(values))
-            case "mean":
-                return float(np.nanmean(values))
-            case "min":
-                return float(np.nanmin(values))
-            case _:
-                if self.verbose:
-                    print(f"[ToFSensor] Varning: Okänd metod '{method}', använder 'median'.")
-                return float(np.nanmedian(values))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            match method.lower():
+                case "median":
+                    return float(np.nanmedian(values))
+                case "mean" | "average":
+                    return float(np.nanmean(values))
+                case "min":
+                    return float(np.nanmin(values))
+                case _:
+                    if self.verbose:
+                        print(f"[ToFSensor] Varning: Okänd metod '{method}', använder 'median'.")
+                    return float(np.nanmedian(values))
+
+    def _temporal_aggregate(self, stack: np.ndarray, method: str) -> np.ndarray:
+        """
+        Kör Steg 1: Komprimerar tidsaxeln (axis 0) i en 3D-matris (N, 8, 8) till en 2D (8, 8)-matris.
+        Hanterar automatiskt NaN-värden så att enstaka brusiga zoner i en mätning inte förstör helheten.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            match method.lower():
+                case "mean" | "average":
+                    result = np.nanmean(stack, axis=0)
+                case "min":
+                    result = np.nanmin(stack, axis=0)
+                case "median" | _:
+                    result = np.nanmedian(stack, axis=0)
+        return result
 
     def read(
         self,
         samples: int = 1,
-        method: str = "median",
-        zone: str = "center"
+        sample_method: str = "median",
+        zone: str = "center",
+        zone_method: str = "median",
+        timeout: Optional[float] = None,
+        **kwargs
     ) -> ToFReading:
         """
-        Läser av det senaste mätvärdet från ToF-sensorn och returnerar en ToFReading.
-        
-        Om sensorn inte är ansluten returneras ett säkert ToFReading med
-        distance_mm = -1.0 och is_valid = False.
+        Läser av mätvärden från ToF-sensorn med tvåstegs brusreducering:
+          Steg 1 (Tidsfilter): Samlar N bildrutor och komprimerar över tid med sample_method till en ren 8x8-matris.
+          Steg 2 (Rumsfilter): Klipper ut specificerad zon och beräknar slutligt avstånd med zone_method.
+
+        :param samples: Antal färska 8x8-bildrutor att samla in över tid (>= 1).
+        :param sample_method: Metod för tidsbrus ('median', 'mean', 'min').
+        :param zone: Zon-urval ('center', 'spot', 'all').
+        :param zone_method: Metod för rumsaggregering ('median', 'mean', 'min').
+        :param timeout: Max väntetid i sekunder (default: dynamisk baserad på samples och frekvens).
+        :return: ToFReading med det beräknade mätvärdet och metadata.
         """
-        if not self.is_connected or self._latest_distances is None:
-            if self.verbose and not self.is_connected:
+        # Bakåtkompatibilitet: om 'method' skickas som keyword-argument, tolka det som zone_method
+        if "method" in kwargs:
+            zone_method = kwargs["method"]
+
+        samples = max(1, samples)
+
+        if not self.is_connected:
+            if self.verbose:
                 print("[ToFSensor] FEL: Kan inte läsa, sensorn är inte ansluten.")
             return ToFReading(
                 distance_mm=-1.0,
                 is_valid=False,
                 timestamp=time.time(),
                 samples=samples,
-                method=method,
+                method=zone_method,
                 zone=zone,
                 valid_zones=0,
             )
 
-        # Hämta en trådsäker kopia av den senaste datan
-        with self._lock:
-            distances = self._latest_distances.copy()
-            statuses = self._latest_statuses.copy()
-            ts = self._latest_timestamp
+        # Hämta de N matriserna
+        if not self._running:
+            # Offline / Mock-läge (t.ex. vid enhetstester där bakgrundstråden inte snurrar)
+            with self._lock:
+                if self._latest_distances is None or self._latest_statuses is None:
+                    return ToFReading(
+                        distance_mm=-1.0,
+                        is_valid=False,
+                        timestamp=time.time(),
+                        samples=samples,
+                        method=zone_method,
+                        zone=zone,
+                        valid_zones=0,
+                    )
+                distances_list = [self._latest_distances.copy() for _ in range(samples)]
+                statuses_list = [self._latest_statuses.copy() for _ in range(samples)]
+                ts = self._latest_timestamp
+        else:
+            # Aktiv hårdvara med bakgrundstråd: Lägg en mätorder till kocken
+            if timeout is None:
+                # Beräkna rimlig timeout: förväntad tid + 1.5 sekunders marginal
+                timeout = (samples / self.frequency_hz) + 1.5
 
-        # 1. Filtrera status (sätter ogiltiga till np.nan)
-        filtered_matrix = self._filter_matrix(distances, statuses)
+            with self._lock:
+                self._collected_distances = []
+                self._collected_statuses = []
+                self._target_samples = samples
+                self._order_event.clear()
 
-        # 2. Välj zon
-        zone_data = self._extract_zone(filtered_matrix, zone)
+            # Servitören väntar på att kocken slår på serveringsklockan
+            completed = self._order_event.wait(timeout=timeout)
 
-        # 3. Räkna giltiga zoner
+            if not completed:
+                if self.verbose:
+                    print(f"[ToFSensor] Timeout: Fick inte {samples} samples inom {timeout:.2f}s.")
+                with self._lock:
+                    self._target_samples = 0
+                return ToFReading(
+                    distance_mm=-1.0,
+                    is_valid=False,
+                    timestamp=time.time(),
+                    samples=samples,
+                    method=zone_method,
+                    zone=zone,
+                    valid_zones=0,
+                )
+
+            with self._lock:
+                distances_list = [d.copy() for d in self._collected_distances]
+                statuses_list = [s.copy() for s in self._collected_statuses]
+                ts = self._latest_timestamp
+
+        # 1. Filtrera varje bildruta mot ST:s hårdvarustatus (ogiltiga sätts till np.nan)
+        filtered_frames = [
+            self._filter_matrix(dist, stat)
+            for dist, stat in zip(distances_list, statuses_list)
+        ]
+        stack = np.stack(filtered_frames, axis=0)  # Form: (N, 8, 8)
+
+        # 2. STEG 1: Tidsfilter över de N matriserna -> ger en enda brusfri 8x8-matris
+        temporal_matrix = self._temporal_aggregate(stack, sample_method)
+
+        # 3. STEG 2: Rumsfilter (klipp ut zon och beräkna slutgiltigt millimeteravstånd)
+        zone_data = self._extract_zone(temporal_matrix, zone)
         valid_count = int(np.count_nonzero(~np.isnan(zone_data)))
 
-        # 4. Aggregera
-        final_distance = self._aggregate(zone_data, method)
+        final_distance = self._aggregate(zone_data, zone_method)
         is_valid = (final_distance > 0.0) and (valid_count > 0)
 
         return ToFReading(
@@ -248,7 +350,7 @@ class ToFSensor:
             is_valid=is_valid,
             timestamp=ts,
             samples=samples,
-            method=method,
+            method=zone_method,
             zone=zone,
             valid_zones=valid_count,
         )
