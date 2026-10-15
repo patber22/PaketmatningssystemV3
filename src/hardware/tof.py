@@ -109,6 +109,7 @@ class ToFSensor:
             if self.verbose:
                 print(f"[ToFSensor] FEL: Kunde inte ansluta till sensorn: {e}")
             self.is_connected = False
+            self._running = False
             self._driver = None
             return False
 
