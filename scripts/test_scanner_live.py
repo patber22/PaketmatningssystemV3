@@ -15,10 +15,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.hardware.scanner import BarcodeScanner
 
 
+def on_scan(reading):
+    print(f"\n⚡ [CALLBACK TRIGGAD] Bakgrundstråden fångade koden direkt: '{reading.code}'!")
+
+
 def main():
     print("\n=== Live-test: Honeywell MS5145 Scanner ===")
 
-    with BarcodeScanner() as scanner:
+    with BarcodeScanner(on_scan_callback=on_scan) as scanner:
         if not scanner.is_connected:
             print("Kunde inte ansluta till scannern. Kontrollera att den är i USB!")
             return
