@@ -5,3 +5,6 @@
 
 # Grundläggande numerisk matematik och matrishantering (används av ToF, Stereo, Normaler)
 numpy>=1.24.0
+
+# Asynkron USB HID-avläsning för streckkodsläsare (Linux evdev)
+evdev>=1.6.0; sys_platform == 'linux'
