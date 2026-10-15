@@ -1,7 +1,7 @@
 """
 Enhetstester för BarcodeScanner-klassen (src/hardware/scanner.py).
-Verifierar konsumentmönster (peek/consume/clear), frånkoppling, trådsäkerhet
-och callback-hantering isolerat utan krav på fysisk USB-hårdvara.
+Verifierar konsumentmönster (peek/consume/clear), Null Object Pattern (aldrig None),
+frånkoppling, trådsäkerhet och callback-hantering isolerat utan krav på fysisk USB-hårdvara.
 """
 
 import unittest
@@ -23,10 +23,18 @@ class TestBarcodeScanner(unittest.TestCase):
         self.scanner.disconnect()
 
     def test_disconnected_behavior(self):
-        """Verifiera att en frånkopplad scanner returnerar None och aldrig kraschar."""
+        """Verifiera att en frånkopplad scanner returnerar BarcodeReading.invalid() och aldrig kraschar."""
         self.assertFalse(self.scanner.is_connected)
-        self.assertIsNone(self.scanner.peek())
-        self.assertIsNone(self.scanner.consume())
+
+        peek_reading = self.scanner.peek()
+        self.assertIsInstance(peek_reading, BarcodeReading)
+        self.assertFalse(peek_reading.is_valid())
+        self.assertEqual(peek_reading.code, "")
+
+        consume_reading = self.scanner.consume()
+        self.assertIsInstance(consume_reading, BarcodeReading)
+        self.assertFalse(consume_reading.is_valid())
+        self.assertEqual(consume_reading.code, "")
 
         # clear() ska inte kasta något undantag
         try:
@@ -45,15 +53,14 @@ class TestBarcodeScanner(unittest.TestCase):
 
         # Första peek()
         reading1 = self.scanner.peek()
-        self.assertIsNotNone(reading1)
+        self.assertIsInstance(reading1, BarcodeReading)
+        self.assertTrue(reading1.is_valid())
         self.assertEqual(reading1.code, "7312345678901")
-        self.assertFalse(reading1.is_used)
 
-        # Andra peek() ska fortfarande ge samma kod
+        # Andra peek() ska fortfarande ge samma giltiga kod
         reading2 = self.scanner.peek()
-        self.assertIsNotNone(reading2)
+        self.assertTrue(reading2.is_valid())
         self.assertEqual(reading2.code, "7312345678901")
-        self.assertFalse(reading2.is_used)
 
     def test_consume_marks_used(self):
         """Verifiera att consume() förbrukar koden så att den inte kan läsas igen."""
@@ -64,18 +71,17 @@ class TestBarcodeScanner(unittest.TestCase):
             is_used=False
         )
 
-        # Första anropet: ska hämta koden och markera som förbrukad
+        # Första anropet: ska hämta koden och förbruka den i scannern
         consumed = self.scanner.consume()
-        self.assertIsNotNone(consumed)
+        self.assertTrue(consumed.is_valid())
         self.assertEqual(consumed.code, "7312345678901")
-        self.assertTrue(consumed.is_used)
 
-        # Andra anropet: koden är redan förbrukad -> ska returnera None
+        # Andra anropet: koden är redan förbrukad -> ska returnera BarcodeReading.invalid()
         second_consume = self.scanner.consume()
-        self.assertIsNone(second_consume)
+        self.assertFalse(second_consume.is_valid())
 
-        # peek() ska nu också returnera None
-        self.assertIsNone(self.scanner.peek())
+        # peek() ska nu också returnera BarcodeReading.invalid()
+        self.assertFalse(self.scanner.peek().is_valid())
 
     def test_clear_discards_reading(self):
         """Verifiera att clear() (Ångra scanning) kastar bort koden direkt."""
@@ -90,8 +96,8 @@ class TestBarcodeScanner(unittest.TestCase):
         self.scanner.clear()
 
         # Nu ska varken consume() eller peek() hitta någon giltig kod
-        self.assertIsNone(self.scanner.consume())
-        self.assertIsNone(self.scanner.peek())
+        self.assertFalse(self.scanner.consume().is_valid())
+        self.assertFalse(self.scanner.peek().is_valid())
 
     def test_new_scan_overwrites_consumed_reading(self):
         """Verifiera att en ny inläsning återställer is_used=False och blir tillgänglig."""
@@ -104,8 +110,9 @@ class TestBarcodeScanner(unittest.TestCase):
 
         # Förbruka den gamla koden
         old = self.scanner.consume()
+        self.assertTrue(old.is_valid())
         self.assertEqual(old.code, "GAMMAL_KOD_001")
-        self.assertIsNone(self.scanner.consume())
+        self.assertFalse(self.scanner.consume().is_valid())
 
         # Simulera att användaren scannar ett nytt paket
         self.scanner._latest_reading = BarcodeReading(
@@ -116,13 +123,12 @@ class TestBarcodeScanner(unittest.TestCase):
 
         # Nu ska den nya koden kunna läsas och förbrukas
         new_peek = self.scanner.peek()
-        self.assertIsNotNone(new_peek)
+        self.assertTrue(new_peek.is_valid())
         self.assertEqual(new_peek.code, "NY_KOD_002")
 
         new_consumed = self.scanner.consume()
-        self.assertIsNotNone(new_consumed)
+        self.assertTrue(new_consumed.is_valid())
         self.assertEqual(new_consumed.code, "NY_KOD_002")
-        self.assertTrue(new_consumed.is_used)
 
     def test_context_manager(self):
         """Verifiera att with-satsen (__enter__ och __exit__) fungerar och kopplar ifrån."""
@@ -158,6 +164,7 @@ class TestBarcodeScanner(unittest.TestCase):
 
         self.assertEqual(len(received_readings), 1)
         self.assertEqual(received_readings[0].code, "CALLBACK_TEST_123")
+        self.assertTrue(received_readings[0].is_valid())
 
 
 if __name__ == "__main__":
