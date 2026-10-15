@@ -31,16 +31,18 @@ Detta är ett levande dokument som beskriver utvecklingsordningen, faserna och m
 
 Denna fas bygger kärnan i mjukvaran i lugn och ro innan hårdvaran anländer. Varje fil skrivs och testas isolerat.
 
-- [ ] **1.1. ToF-sensor drivrutin (`src/hardware/tof.py`)**
+- [x] **1.1. ToF-sensor drivrutin (`src/hardware/tof.py`)**
   - Ren I2C-drivrutin för ST VL53L5CX (8x8 multizon) över Linux I2C (Buss 1).
-  - Metoder för att hämta zon-avstånd, beräkna genomsnittligt toppavstånd och detektera när ett paket placeras på bordet.
-  - Enhetstest med syntetisk hårdvaru-mock så koden kan köras och testas även på utvecklingsdatorn.
+  - Tvåstegs brusfiltrering: tidsfilter (`read_matrix` över N samples) och rumsfilter (`read` över zoner som center, inner4x4, etc).
+  - Null Object Pattern (`ToFReading.invalid()`, `is_valid()` metod).
+  - Full enhetstestsvit (`tests/test_tof.py`) med trådsynkronisering och feltolerans.
 
-- [ ] **1.2. Streckkodsläsare drivrutin (`src/hardware/scanner.py`)**
+- [x] **1.2. Streckkodsläsare drivrutin (`src/hardware/scanner.py`)**
   - Drivrutin för Honeywell Metrologic Eclipse MS5145 via Linux `evdev` (USB HID).
   - Läser koder i bakgrunden utan att terminalen behöver ha aktivt fokus.
-  - Fallback till standard `input()` / stdin för testning i Windows/macOS.
-  - Event-driven callback (`on_scan(barcode)`) som triggar mätsekvensen.
+  - Konsumentmönster (`peek`/`consume`/`clear`) och Null Object Pattern (`BarcodeReading.invalid()`, `is_valid()` metod).
+  - Event-driven callback (`on_scan_callback`) som triggar mätsekvensen.
+  - Full enhetstestsvit (`tests/test_scanner.py`) för trådsäkerhet och konsumentlogik.
 
 - [ ] **1.3. Stereomatchning & Ytterkanter (`src/algorithms/stereo_matcher.py`)**
   - OpenCV SGBM-implementation optimerad för Bild 5 (Full Flash stereopar).
