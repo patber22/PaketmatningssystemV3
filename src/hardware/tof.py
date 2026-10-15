@@ -134,12 +134,15 @@ class ToFSensor:
 
         while self._running and self._driver:
             try:
-                if self._driver.check_data_ready():
-                    data = self._driver.get_ranging_data()
+                if self._driver.data_ready():
+                    data = self._driver.get_data()
 
                     # ST returnerar 64 element i rad, omforma till 8x8
                     dist_8x8 = np.array(data.distance_mm, dtype=np.float32).reshape((8, 8))
-                    status_8x8 = np.array(data.target_status, dtype=np.uint8).reshape((8, 8))
+                    if hasattr(data, "target_status"):
+                        status_8x8 = np.array(data.target_status, dtype=np.uint8).reshape((8, 8))
+                    else:
+                        status_8x8 = np.where(dist_8x8 > 0, 5, 0).astype(np.uint8)
                     now = time.time()
 
                     # Trådsäker uppdatering via Mutex
