@@ -271,8 +271,10 @@ class BarcodeScanner:
 
     def consume(self) -> BarcodeReading:
         """
-        Hämtar och förbrukar den senaste streckkoden (sätter is_used = True).
-        Returnerar BarcodeReading.invalid() om scannern inte är ansluten eller ingen färsk kod finns.
+        Hämtar och förbrukar den senaste streckkoden.
+        Återställer intern läsning till BarcodeReading.invalid() så att koden inte kan läsas igen.
+        Returnerar den giltiga koden, eller BarcodeReading.invalid() om scannern inte är ansluten
+        eller om ingen färsk kod fanns.
         """
         if not self.is_connected:
             if self.verbose:
@@ -285,12 +287,13 @@ class BarcodeScanner:
                     print("[BarcodeScanner] consume(): Ingen streckkod att förbruka.")
                 return BarcodeReading.invalid()
 
-            self._latest_reading.is_used = True
-            return self._latest_reading
+            reading = self._latest_reading
+            self._latest_reading = BarcodeReading.invalid()
+            return reading
 
     def clear(self) -> None:
         """
-        Ångra/rensa scanning: Förbrukar den senaste koden utan att returnera den.
+        Ångra/rensa scanning: Förbrukar och kasserar den senaste koden.
         """
         self.consume()
 
