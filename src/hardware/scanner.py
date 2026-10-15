@@ -59,8 +59,8 @@ class BarcodeScanner:
         self._device = None
         self.is_connected = False
 
-        # Senaste inlästa streckkod
-        self._latest_reading: Optional[BarcodeReading] = None
+        # Senaste inlästa streckkod (startar som ogiltig, aldrig None)
+        self._latest_reading: BarcodeReading = BarcodeReading.invalid()
 
         # Trådhantering och Mutex
         self._thread: Optional[threading.Thread] = None
@@ -252,48 +252,38 @@ class BarcodeScanner:
 
         self.is_connected = False
 
-    def peek(self) -> Optional[BarcodeReading]:
+    def peek(self) -> BarcodeReading:
         """
         Inspekterar den senaste inlästa streckkoden utan att markera den som använd.
-        Returnerar None om ingen scanner är ansluten, ingen kod har lästs,
-        eller om koden redan är förbrukad (is_used=True).
+        Returnerar BarcodeReading.invalid() om ingen scanner är ansluten eller ingen färsk kod finns.
         """
         if not self.is_connected:
             if self.verbose:
                 print("[BarcodeScanner] peek(): Scannern är inte ansluten.")
-            return None
+            return BarcodeReading.invalid()
 
         with self._lock:
-            if self._latest_reading is None:
+            if not self._latest_reading.is_valid():
                 if self.verbose:
-                    print("[BarcodeScanner] peek(): Ingen streckkod har lästs in ännu.")
-                return None
-            if self._latest_reading.is_used:
-                if self.verbose:
-                    print("[BarcodeScanner] peek(): Senaste streckkoden är redan förbrukad.")
-                return None
+                    print("[BarcodeScanner] peek(): Ingen färsk streckkod tillgänglig.")
+                return BarcodeReading.invalid()
             return self._latest_reading
 
-    def consume(self) -> Optional[BarcodeReading]:
+    def consume(self) -> BarcodeReading:
         """
-        Hämtar och förbrukar den senaste streckkoden.
-        Sätter is_used = True så att den inte kan kopplas till nästa paket.
-        Returnerar None om scannern inte är ansluten eller ingen färsk kod finns.
+        Hämtar och förbrukar den senaste streckkoden (sätter is_used = True).
+        Returnerar BarcodeReading.invalid() om scannern inte är ansluten eller ingen färsk kod finns.
         """
         if not self.is_connected:
             if self.verbose:
                 print("[BarcodeScanner] consume(): Scannern är inte ansluten.")
-            return None
+            return BarcodeReading.invalid()
 
         with self._lock:
-            if self._latest_reading is None:
+            if not self._latest_reading.is_valid():
                 if self.verbose:
                     print("[BarcodeScanner] consume(): Ingen streckkod att förbruka.")
-                return None
-            if self._latest_reading.is_used:
-                if self.verbose:
-                    print("[BarcodeScanner] consume(): Senaste streckkoden är redan förbrukad.")
-                return None
+                return BarcodeReading.invalid()
 
             self._latest_reading.is_used = True
             return self._latest_reading
