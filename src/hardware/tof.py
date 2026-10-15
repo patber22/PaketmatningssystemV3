@@ -259,3 +259,10 @@ class ToFSensor:
             return None
         with self._lock:
             return self._latest_distances.copy()
+
+    def __enter__(self) -> "ToFSensor":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.disconnect()
+
