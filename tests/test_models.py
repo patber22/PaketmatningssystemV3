@@ -1,12 +1,13 @@
 """
-Enhetstester för kärndataklasser i src/core/models.py.
-Körs blixtsnabbt och automatiskt utan hårdvaruberoenden.
+Enhetstester för kärndataklasser i src/core/models.py (ToFReading och BarcodeReading).
+Verifierar standardvärden, is_valid()-metod, invalid()-fabriker,
+serialisering (to_dict/from_dict) och tidslogik.
 """
 
 import time
 import unittest
 
-from src.core.models import ToFReading
+from src.core.models import ToFReading, BarcodeReading
 
 
 class TestToFReading(unittest.TestCase):
@@ -15,49 +16,68 @@ class TestToFReading(unittest.TestCase):
     def test_default_values(self):
         """Verifiera att standardvärden är säkra och ogiltiga vid tom initiering."""
         reading = ToFReading()
-        self.assertEqual(reading.distance_mm, 0.0)
-        self.assertFalse(reading.is_valid)
+        self.assertEqual(reading.distance_mm, -1.0)
+        self.assertFalse(reading.is_valid())
         self.assertEqual(reading.timestamp, 0.0)
-        self.assertEqual(reading.samples, 1)
-        self.assertEqual(reading.method, "median")
-        self.assertEqual(reading.zone, "center")
+        self.assertEqual(reading.samples, 0)
+        self.assertEqual(reading.sample_method, "")
+        self.assertEqual(reading.zone, "")
+        self.assertEqual(reading.zone_method, "")
         self.assertEqual(reading.valid_zones, 0)
         # En tom/ogiltig läsning ska alltid räknas som utgången
         self.assertTrue(reading.is_expired())
+
+    def test_invalid_factory(self):
+        """Verifiera att ToFReading.invalid() skapar ett säkert, ogiltigt objekt utan argument."""
+        inv = ToFReading.invalid()
+        self.assertEqual(inv.distance_mm, -1.0)
+        self.assertFalse(inv.is_valid())
+        self.assertEqual(inv.samples, 0)
+        self.assertEqual(inv.sample_method, "")
+        self.assertEqual(inv.zone, "")
+        self.assertEqual(inv.zone_method, "")
+        self.assertEqual(inv.valid_zones, 0)
+        self.assertTrue(inv.is_expired())
 
     def test_to_dict_and_from_dict_roundtrip(self):
         """Verifiera att data bevaras 100% korrekt genom to_dict och from_dict."""
         original = ToFReading(
             distance_mm=952.456,
-            is_valid=True,
             timestamp=1728842400.0,
             samples=5,
-            method="median",
+            sample_method="mean",
             zone="center",
-            valid_zones=16
+            zone_method="median",
+            valid_zones=16,
+            _is_valid=True
         )
+
+        self.assertTrue(original.is_valid())
 
         data = original.to_dict()
         # Verifiera avrundning till 2 decimaler
         self.assertEqual(data["distance_mm"], 952.46)
         self.assertTrue(data["is_valid"])
+        self.assertEqual(data["sample_method"], "mean")
+        self.assertEqual(data["zone_method"], "median")
 
         # Återskapa från dictionaryn
         restored = ToFReading.from_dict(data)
         self.assertEqual(restored.distance_mm, 952.46)
-        self.assertTrue(restored.is_valid)
+        self.assertTrue(restored.is_valid())
         self.assertEqual(restored.timestamp, 1728842400.0)
         self.assertEqual(restored.samples, 5)
-        self.assertEqual(restored.method, "median")
+        self.assertEqual(restored.sample_method, "mean")
         self.assertEqual(restored.zone, "center")
+        self.assertEqual(restored.zone_method, "median")
         self.assertEqual(restored.valid_zones, 16)
 
     def test_from_dict_malformed_data(self):
         """Verifiera att felaktiga typer och saknade fält aldrig kraschar koden."""
         # Test 1: Tom dict
         r1 = ToFReading.from_dict({})
-        self.assertFalse(r1.is_valid)
-        self.assertEqual(r1.distance_mm, 0.0)
+        self.assertFalse(r1.is_valid())
+        self.assertEqual(r1.distance_mm, -1.0)
 
         # Test 2: Värden är None istället för siffror
         bad_data_none = {
@@ -67,7 +87,7 @@ class TestToFReading(unittest.TestCase):
             "samples": None
         }
         r2 = ToFReading.from_dict(bad_data_none)
-        self.assertFalse(r2.is_valid)
+        self.assertFalse(r2.is_valid())
 
         # Test 3: Värden är felaktiga strängar
         bad_data_str = {
@@ -75,35 +95,83 @@ class TestToFReading(unittest.TestCase):
             "is_valid": True
         }
         r3 = ToFReading.from_dict(bad_data_str)
-        self.assertFalse(r3.is_valid)
+        self.assertFalse(r3.is_valid())
 
-        # Test 4: Indata är inte ens en dict (t.ex. None eller en lista)
+        # Test 4: Indata är inte ens en dict
         r4 = ToFReading.from_dict(None)  # type: ignore
-        self.assertFalse(r4.is_valid)
+        self.assertFalse(r4.is_valid())
 
     def test_is_expired_logic(self):
         """Verifiera tidslogiken med timmar."""
         now = time.time()
 
-        # En mätning gjord för 2 timmar sedan
+        # En giltig mätning gjord för 2 timmar sedan
         recent_reading = ToFReading(
             distance_mm=950.0,
-            is_valid=True,
+            valid_zones=16,
+            _is_valid=True,
             timestamp=now - (2 * 3600)
         )
-        # Den ska INTE vara utgången om gränsen är 24 timmar
+        self.assertTrue(recent_reading.is_valid())
         self.assertFalse(recent_reading.is_expired(max_age_hours=24.0))
-        # Men den SKA vara utgången om gränsen är 1 timme
         self.assertTrue(recent_reading.is_expired(max_age_hours=1.0))
 
         # En mätning gjord för 10 dagar sedan (240 timmar)
         old_reading = ToFReading(
             distance_mm=950.0,
-            is_valid=True,
+            valid_zones=16,
+            _is_valid=True,
             timestamp=now - (240 * 3600)
         )
-        # Ska vara utgången mot default 168 timmar (7 dagar)
         self.assertTrue(old_reading.is_expired())
+
+
+class TestBarcodeReading(unittest.TestCase):
+    """Testsvit för BarcodeReading dataklassen."""
+
+    def test_default_values(self):
+        """Verifiera standardvärden för BarcodeReading."""
+        b = BarcodeReading()
+        self.assertEqual(b.code, "")
+        self.assertFalse(b.is_valid())
+        self.assertFalse(b.is_used)
+
+    def test_invalid_factory(self):
+        """Verifiera att BarcodeReading.invalid() skapar ett säkert, förbrukat tomt objekt."""
+        inv = BarcodeReading.invalid()
+        self.assertEqual(inv.code, "")
+        self.assertFalse(inv.is_valid())
+        self.assertTrue(inv.is_used)
+
+    def test_valid_barcode(self):
+        """Verifiera att en kod med tecken och is_used=False är giltig."""
+        b = BarcodeReading(code="7312345678901", is_used=False)
+        self.assertTrue(b.is_valid())
+
+        # Om koden markeras som använd ska den inte längre vara giltig
+        b.is_used = True
+        self.assertFalse(b.is_valid())
+
+    def test_to_dict_and_from_dict(self):
+        """Verifiera serialisering för BarcodeReading."""
+        original = BarcodeReading(
+            code="ABC-12345",
+            timestamp=1728842400.0,
+            is_used=False
+        )
+        data = original.to_dict()
+        self.assertEqual(data["code"], "ABC-12345")
+        self.assertTrue(data["is_valid"])
+
+        restored = BarcodeReading.from_dict(data)
+        self.assertEqual(restored.code, "ABC-12345")
+        self.assertTrue(restored.is_valid())
+
+    def test_from_dict_malformed(self):
+        """Verifiera att felaktig dict ger BarcodeReading.invalid()."""
+        r = BarcodeReading.from_dict(None)  # type: ignore
+        self.assertFalse(r.is_valid())
+        self.assertEqual(r.code, "")
 
 
 if __name__ == "__main__":
