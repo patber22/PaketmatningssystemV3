@@ -16,7 +16,7 @@ from src.hardware.scanner import BarcodeScanner
 
 
 def on_scan(reading):
-    print(f"\n⚡ [CALLBACK TRIGGAD] Bakgrundstråden fångade koden direkt: '{reading.code}'!")
+    print(f"\n⚡ [CALLBACK TRIGGAD] Bakgrundstråden fångade koden direkt: '{reading.code}' (is_valid={reading.is_valid()})!")
 
 
 def main():
@@ -34,8 +34,8 @@ def main():
         scanned = False
         for _ in range(20):
             reading = scanner.peek()
-            if reading:
-                print(f"\n[OK] peek() hittade: '{reading.code}' (is_used={reading.is_used})")
+            if reading.is_valid():
+                print(f"\n[OK] peek() hittade: '{reading.code}' (is_valid={reading.is_valid()})")
                 scanned = True
                 break
             time.sleep(0.5)
@@ -46,10 +46,10 @@ def main():
 
         print("\n--- Testar consume() ---")
         consumed = scanner.consume()
-        print(f"consume() returnerade: '{consumed.code}' (is_used={consumed.is_used})")
+        print(f"consume() returnerade: '{consumed.code}' (is_valid={consumed.is_valid()})")
 
         second_try = scanner.consume()
-        print(f"Andra försöket gav: {second_try} (förväntat: None)")
+        print(f"Andra försöket gav: '{second_try.code}' (is_valid={second_try.is_valid()}, förväntat: False)")
 
     print("\nKlart! Scannern frånkopplad.\n")
 
