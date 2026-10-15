@@ -16,13 +16,43 @@ class ToFReading:
     Används för bordskalibrering, referenshöjd och paketdetektering.
     Kan serialiseras direkt in och ut ur config-filer via dictionaries.
     """
-    distance_mm: float = 0.0        # Aggregerat avstånd i mm (t.ex. 950.4)
-    is_valid: bool = False          # True om sensorn läste OK och hittade ett plan
-    timestamp: float = 0.0          # UNIX-tidsstämpel i sekunder (time.time())
-    samples: int = 1                # Antal mätningar som användes för brusreducering
-    method: str = "median"          # Aggregeringsmetod: 'median', 'mean' eller 'min'
-    zone: str = "center"            # Zon-urval: 'center', 'spot' eller 'all'
-    valid_zones: int = 0            # Antal zoner med godkänd hårdvarustatus
+    distance_mm: float = 0.0            # Aggregerat avstånd i mm (t.ex. 950.4)
+    is_valid: bool = False              # True om sensorn läste OK och hittade ett plan
+    timestamp: float = 0.0              # UNIX-tidsstämpel i sekunder (time.time())
+    samples: int = 1                    # Antal mätningar som användes för tidsbrusreducering
+    sample_method: str = "median"       # Tidsfilter: 'median', 'mean' eller 'min'
+    zone: str = "center"                # Zon-urval: 'center', 'spot' eller 'all'
+    zone_method: str = "median"         # Rumsfilter: 'median', 'mean' eller 'min'
+    method: str = "median"              # Bakåtkompatibel synonym för zone_method
+    valid_zones: int = 0                # Antal zoner med godkänd hårdvarustatus
+
+    def valid(self) -> bool:
+        """
+        Enhetlig metod för alla datamodeller för att kontrollera giltighet.
+        Returnerar True om mätvärdet är godkänt och större än 0 mm.
+        """
+        return bool(self.is_valid and self.distance_mm > 0.0 and self.valid_zones > 0)
+
+    @classmethod
+    def invalid(
+        cls,
+        samples: int = 1,
+        sample_method: str = "median",
+        zone: str = "center",
+        zone_method: str = "median",
+    ) -> "ToFReading":
+        """Skapar en standardiserad ogiltig ToF-mätning vid hårdvarufel, timeout eller frånkoppling."""
+        return cls(
+            distance_mm=-1.0,
+            is_valid=False,
+            timestamp=time.time(),
+            samples=samples,
+            sample_method=sample_method,
+            zone=zone,
+            zone_method=zone_method,
+            method=zone_method,
+            valid_zones=0,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Konverterar mätningen till en ren dictionary för config.json."""
@@ -31,8 +61,10 @@ class ToFReading:
             "is_valid": self.is_valid,
             "timestamp": self.timestamp,
             "samples": self.samples,
-            "method": self.method,
+            "sample_method": self.sample_method,
             "zone": self.zone,
+            "zone_method": self.zone_method,
+            "method": self.zone_method,
             "valid_zones": self.valid_zones,
         }
 
@@ -40,20 +72,24 @@ class ToFReading:
     def from_dict(cls, data: Dict[str, Any]) -> "ToFReading":
         """Skapar en ToFReading från en dictionary (t.ex. inläst från config.json)."""
         if not isinstance(data, dict):
-            return cls()
+            return cls.invalid()
 
         try:
+            z_method = str(data.get("zone_method", data.get("method", "median")))
+            s_method = str(data.get("sample_method", "median"))
             return cls(
                 distance_mm=float(data.get("distance_mm", 0.0)),
                 is_valid=bool(data.get("is_valid", False)),
                 timestamp=float(data.get("timestamp", 0.0)),
                 samples=int(data.get("samples", 1)),
-                method=str(data.get("method", "median")),
+                sample_method=s_method,
                 zone=str(data.get("zone", "center")),
+                zone_method=z_method,
+                method=z_method,
                 valid_zones=int(data.get("valid_zones", 0)),
             )
         except (ValueError, TypeError):
-            return cls()
+            return cls.invalid()
 
     def is_expired(self, max_age_hours: float = 168.0) -> bool:
         """
@@ -87,6 +123,19 @@ class BarcodeReading:
         """True om koden inte är tom och inte redan förbrukad."""
         return bool(self.code and not self.is_used)
 
+    def valid(self) -> bool:
+        """Enhetlig metod för alla datamodeller för att kontrollera giltighet."""
+        return self.is_valid
+
+    @classmethod
+    def invalid(cls) -> "BarcodeReading":
+        """Skapar en standardiserad ogiltig/tom streckkodsläsning (Null Object Pattern)."""
+        return cls(
+            code="",
+            timestamp=time.time(),
+            is_used=True,
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Konverterar till en ren dictionary för loggar och export."""
         return {
@@ -99,7 +148,7 @@ class BarcodeReading:
     def from_dict(cls, data: Dict[str, Any]) -> "BarcodeReading":
         """Skapar en BarcodeReading från en dictionary."""
         if not isinstance(data, dict):
-            return cls()
+            return cls.invalid()
 
         try:
             return cls(
@@ -108,7 +157,7 @@ class BarcodeReading:
                 is_used=bool(data.get("is_used", False)),
             )
         except (ValueError, TypeError):
-            return cls()
+            return cls.invalid()
 
     def __str__(self) -> str:
         """Kompakt strängrepresentation baserad på to_dict()."""
