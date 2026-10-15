@@ -69,3 +69,49 @@ class ToFReading:
         """Kompakt strängrepresentation baserad på to_dict()."""
         return f"ToFReading: {self.to_dict()}"
 
+
+@dataclass
+class BarcodeReading:
+    """
+    Representerar en scannad streckkod från handscannern (Honeywell MS5145).
+
+    Håller koden, tidsstämpel och en 'is_used'-flagga för att garantera
+    att en kod aldrig råkar kopplas till fel paket av misstag.
+    """
+    code: str = ""                  # Scannad alfanumerisk kod (t.ex. "7312345678901")
+    timestamp: float = 0.0          # UNIX-tidsstämpel i sekunder (time.time())
+    is_used: bool = False           # True om koden redan förbrukats i en mätning
+
+    @property
+    def is_valid(self) -> bool:
+        """True om koden inte är tom och inte redan förbrukad."""
+        return bool(self.code and not self.is_used)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Konverterar till en ren dictionary för loggar och export."""
+        return {
+            "code": self.code,
+            "timestamp": self.timestamp,
+            "is_used": self.is_used,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BarcodeReading":
+        """Skapar en BarcodeReading från en dictionary."""
+        if not isinstance(data, dict):
+            return cls()
+
+        try:
+            return cls(
+                code=str(data.get("code", "")),
+                timestamp=float(data.get("timestamp", 0.0)),
+                is_used=bool(data.get("is_used", False)),
+            )
+        except (ValueError, TypeError):
+            return cls()
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"BarcodeReading: {self.to_dict()}"
+
+
