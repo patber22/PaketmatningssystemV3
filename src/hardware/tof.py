@@ -28,14 +28,10 @@ class ToFSensor:
 
     def __init__(
         self,
-        i2c_bus: int = 1,
-        i2c_address: int = 0x29,
         frequency_hz: int = 15,
         verbose: bool = True,
         auto_connect: bool = True,
     ):
-        self.i2c_bus = i2c_bus
-        self.i2c_address = i2c_address
         self.frequency_hz = frequency_hz
         self.verbose = verbose
 
@@ -73,7 +69,7 @@ class ToFSensor:
 
         try:
             if self.verbose:
-                print(f"[ToFSensor] Ansluter till VL53L5CX på I2C-buss {self.i2c_bus} (0x{self.i2c_address:02x})...")
+                print("[ToFSensor] Ansluter till VL53L5CX på I2C-1 (0x29)...")
 
             # Initiera ST C-drivrutinen (använder I2C-1 och 0x29 som standard)
             self._driver = vl53l5cx_ctypes.VL53L5CX()
@@ -139,10 +135,7 @@ class ToFSensor:
 
                     # ST returnerar 64 element i rad, omforma till 8x8
                     dist_8x8 = np.array(data.distance_mm, dtype=np.float32).reshape((8, 8))
-                    if hasattr(data, "target_status"):
-                        status_8x8 = np.array(data.target_status, dtype=np.uint8).reshape((8, 8))
-                    else:
-                        status_8x8 = np.where(dist_8x8 > 0, 5, 0).astype(np.uint8)
+                    status_8x8 = np.array(data.target_status, dtype=np.uint8).reshape((8, 8))
                     now = time.time()
 
                     # Trådsäker uppdatering via Mutex
