@@ -75,11 +75,8 @@ class ToFSensor:
             if self.verbose:
                 print(f"[ToFSensor] Ansluter till VL53L5CX på I2C-buss {self.i2c_bus} (0x{self.i2c_address:02x})...")
 
-            # Initiera ST C-drivrutinen
-            self._driver = vl53l5cx_ctypes.VL53L5CX(
-                bus_id=self.i2c_bus,
-                i2c_address=self.i2c_address
-            )
+            # Initiera ST C-drivrutinen (använder I2C-1 och 0x29 som standard)
+            self._driver = vl53l5cx_ctypes.VL53L5CX()
 
             # Sätt 8x8 upplösning (64 zoner)
             self._driver.set_resolution(8 * 8)

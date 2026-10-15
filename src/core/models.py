@@ -64,3 +64,13 @@ class ToFReading:
             return True
         max_age_seconds = max_age_hours * 3600.0
         return (time.time() - self.timestamp) > max_age_seconds
+
+    def __str__(self) -> str:
+        """Snygg strängrepresentation för terminal och loggar."""
+        status = "OK" if self.is_valid else "OGILTIG"
+        return f"[ToF] {self.distance_mm:.1f} mm ({status}, {self.valid_zones} zoner, metod: {self.method}, zon: {self.zone})"
+
+    def to_string(self) -> str:
+        """Alias för __str__ för enkelhet och Java-vana."""
+        return str(self)
+
