@@ -8,7 +8,7 @@ Regeln är: **Endast EN aktiv puck i taget.** Allt annat vilar i kön så att du
 ## 📌 NUVARANDE STATUS & NÄSTA STEG
 
 * **Nivå:** Fas 2 (Mekanisk montering & kabling på träriggen)
-* **AKTIV PUCK JUST NU:** 🟢 **Steg 2.1 – Skriva ut och torrmontera chassit**
+* **AKTIV PUCK JUST NU:** 🟢 **Steg 2.2 – Lödning & kabeldragning av de 4 LED-armarna**
 
 ---
 
@@ -16,12 +16,10 @@ Regeln är: **Endast EN aktiv puck i taget.** Allt annat vilar i kön så att du
 
 ### 🧱 FAS 2: Mekanik & Fysisk Montering på Träriggen
 
-- [ ] **Steg 2.1: Utskrift & Torrmontering (PÅGÅR HÄR OCH NU)**
-  * **Uppgift:** Låt printern skriva klart de sista delarna (`Armhub`, 4x `Arm`, `Sensorlock`, `Led-lock`). Provmontera delarna på träbalken utan elektronik så att passningen känns bra.
-  * **Definition of Done:** Hela plaststrukturen (`Armhub`, armar, `sensor-platta` och `cm5+mos`) sitter ihop på träbalken. Inga sladdar eller kretskort inblandade än.
-  * *Status:* Utskrifter pågår. Inget att stressa med – låt printern jobba!
+- [x] **Steg 2.1: Utskrift & Torrmontering (KLART!)**
+  * **Genomfört:** Alla delar utskrivna. `Sensorlock` justerat med extra plats för CSI-kablarna. Chassit provmonterat på träbalken och sitter fint!
 
-- [ ] **Steg 2.2: Lödning & Kabeldragning av de 4 LED-armarna**
+- [ ] **Steg 2.2: Lödning & Kabeldragning av de 4 LED-armarna (AKTIV PUCK)**
   * **Uppgift:** Löd 2-ledare på de 4x 3W 850nm LED-stjärnorna. Montera stjärnan och 60°-linsen i `Led-Hållare` och snäpp på `Led-lock`. Trä kablarna genom armarnas kanaler upp till YYNMOS-4 MOSFET-kortet på ovansidan.
   * **Koppling:** Koppla in seriemotstånden (6.8 Ω 5W) i serie med varje LED på MOSFET:ens utgångar.
   * **Definition of Done:** Alla 4 lampor sitter i sina poddar på armarna och kablarna är skruvade i MOSFET-plintarna.
