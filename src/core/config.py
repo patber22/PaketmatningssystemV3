@@ -57,7 +57,7 @@ LED_CHANNELS: Dict[int, PinMapping] = {
 # Gemensam matning för MOSFET
 MOSFET_PWM_SUPPLY_PIN = 2   # 5V (Fysiskt stift 2 eller 4) bryggad till PWM1..4
 MOSFET_DC_POWER_PIN = 4     # 5V (Fysiskt stift 4) till DC+ skruvplint
-MOSFET_DC_GROUND_PIN = 6    # GND (Fysiskt stift 6) till DC- skruvplint
+MOSFET_DC_GROUND_PIN = 30   # GND (Fysiskt stift 30) till DC- skruvplint
 
 
 # ==============================================================================
