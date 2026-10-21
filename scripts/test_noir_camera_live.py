@@ -122,7 +122,7 @@ class StrobeController:
 def capture_sequence_picam2(strobe: StrobeController, shots: list):
     """Tar bildsekvens via Picamera2 Python-biblioteket."""
     print("[Kamera] Initierar Picamera2 på CAM0 (CSI0)...")
-    picam2 = Picamera2(camera_num=0)
+    picam2 = Picamera2(camera_num=1)
     config = picam2.create_still_configuration()
     picam2.configure(config)
     picam2.start()
