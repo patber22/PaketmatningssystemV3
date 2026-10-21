@@ -8,7 +8,7 @@ Regeln är: **Endast EN aktiv puck i taget.** Allt annat vilar i kön så att du
 ## 📌 NUVARANDE STATUS & NÄSTA STEG
 
 * **Nivå:** Fas 3 (Drivrutiner & Hårdvarutest på CM5 – Mjukvara)
-* **AKTIV PUCK JUST NU:** 🟢 **Steg 3.1 – ToF On-Demand / Burst i mjukvaran**
+* **AKTIV PUCK JUST NU:** 🟢 **Steg 3.3 – Dual Camera & Stroboskopsekvens (`src/hardware/dual_camera.py`)**
 
 ---
 
@@ -29,15 +29,13 @@ Regeln är: **Endast EN aktiv puck i taget.** Allt annat vilar i kön så att du
 
 ### 💻 FAS 3: Drivrutiner & Hårdvarutest på CM5 (Mjukvara)
 
-- [ ] **Steg 3.1: ToF On-Demand / Burst i mjukvaran**
-  * **Uppgift:** Uppdatera `src/hardware/tof.py` med `start_ranging()` och `stop_ranging()` så att 940nm-lasern vilar i mörker som standard och bara tar blixtmätningar vid behov.
-  * **Definition of Done:** Enhetstester i `tests/test_tof.py` passerar på PC och CM5.
+- [x] **Steg 3.1: ToF On-Demand / Burst (UTVÄRDERAT & SLOPAT)**
+  * **Beslut:** Slopas helt. Eftersom ToF-lasern ger 0 % optisk interferens på NoIR-kameran låter vi ToF-sensorn rulla asynkront i sin 15 Hz bakgrundstråd. Detta ger omedelbar 0 ms svarstid vid triggning utan att behöva vänta på uppstart!
 
-- [ ] **Steg 3.2: Foto-experiment (ToF PÅ vs AV på NoIR-kameran)**
-  * **Uppgift:** Köra ett snabbt testskript på CM5 som tar två NoIR-foton på en kartong (ett med ToF-lasern tänd, ett med den släckt).
-  * **Definition of Done:** Vi ser bilderna och utvärderar om ToF-mönstret ger textur för stereomatchning.
+- [x] **Steg 3.2: Foto-experiment (ToF PÅ vs AV på NoIR-kameran) (KLART!)**
+  * **Genomfört:** Testat live via `scripts/test_tof_camera_view.py`. Bildjämförelsen visade att 940nm SPAD VCSEL-lasern är helt osynlig för kameran och inte stör bildtagningen överhuvudtaget.
 
-- [ ] **Steg 3.3: Dual Camera & Stroboskopsekvens (`src/hardware/dual_camera.py`)**
+- [ ] **Steg 3.3: Dual Camera & Stroboskopsekvens (`src/hardware/dual_camera.py`) (AKTIV PUCK)**
   * **Uppgift:** Skriva drivrutinen som initierar båda NoIR-kamerorna synkront på CAM0 och CAM1, och synkar 4x riktade LED-blixtar via GPIO (Active-LOW) med kameraslutaren.
   * **Definition of Done:** Skript tar 4 riktade bilder + 1 stereopar och sparar till disk på < 250 ms.
 
