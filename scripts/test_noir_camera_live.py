@@ -16,8 +16,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# GPIO-pinne för Kanal 1 (GPIO 17 = Fysiskt stift 11 på pajens GPIO-list)
-STROBE_PIN = 17
+# GPIO-pinne för Kanal 1 (Standard: GPIO 5 = Fysiskt stift 29)
+# Kan även överstyras via kommandoraden, t.ex: python3 scripts/test_noir_camera_live.py 5
+STROBE_PIN = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 5
 OUTPUT_FILENAME = PROJECT_ROOT / "test_ir_cam0.jpg"
 
 # Försök importera gpiozero för Raspberry Pi 5/CM5 GPIO-styrning
@@ -124,7 +125,7 @@ def capture_with_rpicam_cli(output_path: Path, strobe: SimpleStrobe):
 
 def main():
     print("\n=== Test: NoIR-kamera (CAM0) + 3W IR Blixt ===")
-    print(f"Styrsignal: GPIO {STROBE_PIN} (Stift 11, Active-LOW)")
+    print(f"Styrsignal: GPIO {STROBE_PIN} (Active-LOW, standard: Stift 29 / GPIO 5)")
     print(f"Målfil:     {OUTPUT_FILENAME.resolve()}\n")
 
     strobe = SimpleStrobe(STROBE_PIN)
