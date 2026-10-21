@@ -32,24 +32,24 @@ LED_CHANNELS: Dict[int, PinMapping] = {
         description="LED 1 (GND1 på MOSFET, Active-LOW)"
     ),
 
-    # Kanal 2: Sydväst / Arm 2
+    # Kanal 2: Sydväst / Arm 2 (Kopplad)
     2: PinMapping(
-        bcm=6,              # Fyll i eller ändra när du kopplat
-        physical_pin=31,    # Fyll i eller ändra när du kopplat
+        bcm=6,
+        physical_pin=31,
         description="LED 2 (GND2 på MOSFET, Active-LOW)"
     ),
 
-    # Kanal 3: Nordväst / Arm 3
+    # Kanal 3: Nordväst / Arm 3 (Kopplad)
     3: PinMapping(
-        bcm=13,             # Fyll i eller ändra när du kopplat
-        physical_pin=33,    # Fyll i eller ändra när du kopplat
+        bcm=25,
+        physical_pin=22,
         description="LED 3 (GND3 på MOSFET, Active-LOW)"
     ),
 
-    # Kanal 4: Nordost / Arm 4
+    # Kanal 4: Nordost / Arm 4 (Kopplad)
     4: PinMapping(
-        bcm=19,             # Fyll i eller ändra när du kopplat
-        physical_pin=35,    # Fyll i eller ändra när du kopplat
+        bcm=24,
+        physical_pin=18,
         description="LED 4 (GND4 på MOSFET, Active-LOW)"
     ),
 }
