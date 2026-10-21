@@ -7,14 +7,14 @@ Regeln är: **Endast EN aktiv puck i taget.** Allt annat vilar i kön så att du
 
 ## 📌 NUVARANDE STATUS & NÄSTA STEG
 
-* **Nivå:** Fas 2 (Mekanisk montering & kabling på träriggen)
-* **AKTIV PUCK JUST NU:** 🟢 **Steg 2.3 – Lödning & kabeldragning av de 4 LED-armarna**
+* **Nivå:** Fas 3 (Drivrutiner & Hårdvarutest på CM5 – Mjukvara)
+* **AKTIV PUCK JUST NU:** 🟢 **Steg 3.1 – ToF On-Demand / Burst i mjukvaran**
 
 ---
 
 ## Detaljerad Steg-för-steg-lista (En sak i taget)
 
-### 🧱 FAS 2: Mekanik & Fysisk Montering på Träriggen
+### 🧱 FAS 2: Mekanik & Fysisk Montering på Träriggen (HELT KLAR! 🎉)
 
 - [x] **Steg 2.1: Utskrift & Torrmontering (KLART!)**
   * **Genomfört:** Alla delar utskrivna. `Sensorlock` justerat med extra plats för CSI-kablarna. Chassit provmonterat på träbalken och sitter fint!
@@ -22,10 +22,8 @@ Regeln är: **Endast EN aktiv puck i taget.** Allt annat vilar i kön så att du
 - [x] **Steg 2.2: Sensormontering & Kapsling under balken (KLART!)**
   * **Genomfört:** Båda NoIR-kamerorna och ST VL53L5CX ToF monterade och fastskruvade. ToF-kabel dragavlastad med insmält standoff + buntband. Kablar dragna till CM5 och verifierade live (båda kamerorna och ToF på 0x29 svarar och fungerar perfekt!).
 
-- [ ] **Steg 2.3: Lödning & Kabeldragning av de 4 LED-armarna (AKTIV PUCK)**
-  * **Uppgift:** Löd 2-ledare på de 4x 3W 850nm LED-stjärnorna. Montera stjärnan och 60°-linsen i `Led-Hållare` och snäpp på `Led-lock`. Trä kablarna genom armarnas kanaler upp till YYNMOS-4 MOSFET-kortet på ovansidan.
-  * **Koppling:** Koppla in seriemotstånden (6.8 Ω 5W) i serie med varje LED på MOSFET:ens utgångar.
-  * **Definition of Done:** Alla 4 lampor sitter i sina poddar på armarna och kablarna är skruvade i MOSFET-plintarna.
+- [x] **Steg 2.3: Lödning & Kabeldragning av de 4 LED-armarna (KLART! 🎉)**
+  * **Genomfört:** Alla 4x 3W 850nm IR-lampor lödda och monterade i armarna med 60°-linser och lock. YYNMOS-4 MOSFET kopplad med 6.8 Ω seriemotstånd. Live-verifierat på CM5 med sekventiell 5-bildsfotografering på CAM0: Alla 4 individuella riktningsskuggor (SE, SW, NW, NE) samt full 4-vägs kombinationsbelysning fungerar precis enligt plan!
 
 ---
 
