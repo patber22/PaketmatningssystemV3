@@ -71,7 +71,7 @@ TOF_I2C_ADDRESS = 0x29      # 7-bitars hårdvaruadress
 TOF_PINS = {
     "SDA": PinMapping(bcm=2, physical_pin=3, description="I2C1 SDA"),
     "SCL": PinMapping(bcm=3, physical_pin=5, description="I2C1 SCL"),
-    "VIN": PinMapping(bcm=-1, physical_pin=17, description="3.3V Power"),
+    "VIN": PinMapping(bcm=-1, physical_pin=1, description="3.3V Power"),
     "GND": PinMapping(bcm=-1, physical_pin=25, description="GND"),
 }
 
