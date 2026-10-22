@@ -9,7 +9,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from src.core.models import ToFReading, BarcodeReading, CameraFrame
+from src.core.models import ToFReading, BarcodeReading, CameraFrame, CameraFramePair
 import numpy as np
 import cv2
 
@@ -293,6 +293,81 @@ class TestCameraFrame(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             inv = CameraFrame.invalid()
             self.assertIsNone(inv.to_jpeg(path=tmp_dir))
+
+
+class TestCameraFramePair(unittest.TestCase):
+    """Testsvit för CameraFramePair dataklassen."""
+
+    def test_default_values(self):
+        """Verifiera att standard stereopar har ogiltiga bildramar."""
+        pair = CameraFramePair()
+        self.assertFalse(pair.is_valid())
+        self.assertFalse(pair.left.is_valid())
+        self.assertFalse(pair.right.is_valid())
+        self.assertEqual(pair.timestamp, 0.0)
+
+    def test_invalid_factory(self):
+        """Verifiera att invalid() skapar ett säkert ogiltigt stereopar."""
+        inv = CameraFramePair.invalid()
+        self.assertFalse(inv.is_valid())
+        self.assertGreater(inv.timestamp, 0.0)
+
+    def test_valid_pair(self):
+        """Verifiera att stereoparet är giltigt om och endast om BÅDA bilderna är giltiga."""
+        img = np.zeros((10, 10, 3), dtype=np.uint8)
+        f_left = CameraFrame(image=img, camera_id="CAM1", _is_valid=True)
+        f_right = CameraFrame(image=img, camera_id="CAM0", _is_valid=True)
+
+        pair = CameraFramePair(left=f_left, right=f_right, timestamp=1728842400.0)
+        self.assertTrue(pair.is_valid())
+
+        # Om bara ena är giltig ska hela paret vara ogiltigt
+        half_pair = CameraFramePair(left=f_left, right=CameraFrame.invalid())
+        self.assertFalse(half_pair.is_valid())
+
+    def test_to_dict_and_from_dict(self):
+        """Verifiera roundtrip serialisering för CameraFramePair."""
+        img = np.full((20, 30, 3), 50, dtype=np.uint8)
+        f_left = CameraFrame(image=img, camera_id="CAM1", resolution=(30, 20), _is_valid=True)
+        f_right = CameraFrame(image=img, camera_id="CAM0", resolution=(30, 20), _is_valid=True)
+
+        original = CameraFramePair(left=f_left, right=f_right, timestamp=1728842400.0)
+        data = original.to_dict()
+        self.assertTrue(data["is_valid"])
+        self.assertEqual(data["timestamp"], 1728842400.0)
+
+        restored = CameraFramePair.from_dict(data, left_image=img, right_image=img)
+        self.assertTrue(restored.is_valid())
+        self.assertEqual(restored.left.camera_id, "CAM1")
+        self.assertEqual(restored.right.camera_id, "CAM0")
+
+    def test_from_dict_malformed(self):
+        """Verifiera att felaktiga indata till from_dict ger ogiltigt stereopar."""
+        inv = CameraFramePair.from_dict(None)  # type: ignore
+        self.assertFalse(inv.is_valid())
+
+    def test_to_jpeg(self):
+        """Verifiera att to_jpeg sparar båda bilderna i paret."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            img = np.full((20, 20, 3), 100, dtype=np.uint8)
+            f_left = CameraFrame(image=img, camera_id="CAM1", timestamp=1000.0, _is_valid=True)
+            f_right = CameraFrame(image=img, camera_id="CAM0", timestamp=1000.0, _is_valid=True)
+            pair = CameraFramePair(left=f_left, right=f_right, timestamp=1000.0)
+
+            left_path, right_path = pair.to_jpeg(path=tmp_path)
+            self.assertIsNotNone(left_path)
+            self.assertIsNotNone(right_path)
+            self.assertTrue(left_path.exists())
+            self.assertTrue(right_path.exists())
+            self.assertIn("CAM1", left_path.name)
+            self.assertIn("CAM0", right_path.name)
+
+    def test_str_representation(self):
+        """Verifiera att __str__ returnerar en läsbar sträng."""
+        pair = CameraFramePair.invalid()
+        self.assertIn("CameraFramePair", str(pair))
+
 
 
 

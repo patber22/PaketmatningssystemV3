@@ -3,7 +3,7 @@ Kärndataklasser och domänmodeller för Paketmätningssystem V3.
 Håller standardiserade datastrukturer oberoende av hårdvarudrivrutiner.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import time
 from typing import Any, Dict, Optional, Tuple, Union
@@ -288,5 +288,75 @@ class CameraFrame:
     def __str__(self) -> str:
         """Kompakt strängrepresentation baserad på to_dict()."""
         return f"CameraFrame: {self.to_dict()}"
+
+
+@dataclass
+class CameraFramePair:
+    """
+    Representerar ett synkroniserat stereopar från NoIR-kamerorna.
+
+    Garanterar semantisk separation mellan vänster (CAM1) och höger (CAM0) kamera
+    så att datorseendealgoritmer aldrig blandar ihop stereobasens geometri.
+    """
+    left: CameraFrame = field(default_factory=CameraFrame.invalid)
+    right: CameraFrame = field(default_factory=CameraFrame.invalid)
+    timestamp: float = 0.0
+
+    def is_valid(self) -> bool:
+        """True om BÅDA bilderna i paret är giltiga."""
+        return bool(self.left.is_valid() and self.right.is_valid())
+
+    @classmethod
+    def invalid(cls) -> "CameraFramePair":
+        """Null Object Pattern: Skapar ett tomt/ogiltigt stereopar."""
+        return cls(
+            left=CameraFrame.invalid(),
+            right=CameraFrame.invalid(),
+            timestamp=time.time(),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Konverterar stereoparets metadata till dictionary för loggar/export."""
+        return {
+            "is_valid": self.is_valid(),
+            "timestamp": self.timestamp,
+            "left": self.left.to_dict(),
+            "right": self.right.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        left_image: Optional[Any] = None,
+        right_image: Optional[Any] = None
+    ) -> "CameraFramePair":
+        """Skapar en CameraFramePair från dictionary och valfria bildmatriser."""
+        if not isinstance(data, dict):
+            return cls.invalid()
+
+        try:
+            left_dict = data.get("left", {})
+            right_dict = data.get("right", {})
+            left_frame = CameraFrame.from_dict(left_dict, image=left_image)
+            right_frame = CameraFrame.from_dict(right_dict, image=right_image)
+            return cls(
+                left=left_frame,
+                right=right_frame,
+                timestamp=float(data.get("timestamp", 0.0)),
+            )
+        except (ValueError, TypeError):
+            return cls.invalid()
+
+    def to_jpeg(self, path: Union[str, Path] = Path(".")) -> Tuple[Optional[Path], Optional[Path]]:
+        """Sparar båda bilderna i paret (t.ex. {ts}_CAM1.jpg och {ts}_CAM0.jpg)."""
+        left_path = self.left.to_jpeg(path) if self.left.is_valid() else None
+        right_path = self.right.to_jpeg(path) if self.right.is_valid() else None
+        return (left_path, right_path)
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"CameraFramePair: {self.to_dict()}"
+
 
 
