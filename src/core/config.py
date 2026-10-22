@@ -24,6 +24,8 @@ class PinMapping:
 # GND1..4 på MOSFET styrs individuellt av GPIO-pinnarna nedan.
 # ==============================================================================
 
+LED_ACTIVE_HIGH: bool = False  # YYNMOS-4 optokopplare styrs Active-LOW
+
 LED_CHANNELS: Dict[int, PinMapping] = {
     # Kanal 1: Sydost / Arm 1 (Testad och verifierad!)
     1: PinMapping(

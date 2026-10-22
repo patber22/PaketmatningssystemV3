@@ -35,6 +35,7 @@ class TestLED(unittest.TestCase):
             self.assertEqual(led.bcm_pin, expected.bcm)
             self.assertEqual(led.physical_pin, expected.physical_pin)
             self.assertEqual(led.description, expected.description)
+            self.assertFalse(led.active_high)
             self.assertFalse(led.is_connected)
             self.assertFalse(led.is_on)
 

@@ -7,7 +7,7 @@ Styrning sker via YYNMOS-4 MOSFET med optokopplare:
 """
 
 from typing import Optional
-from src.core.config import LED_CHANNELS, PinMapping
+from src.core.config import LED_CHANNELS, LED_ACTIVE_HIGH, PinMapping
 
 try:
     from gpiozero import OutputDevice
@@ -26,17 +26,17 @@ class LED:
         channel: int,
         verbose: bool = True,
         auto_connect: bool = True,
-        active_high: bool = False,
     ):
         """
         Kräver explicit angivande av kanalnummer (1, 2, 3 eller 4).
+        Styrprincip (Active-LOW) hämtas globalt från src/core/config.py.
         """
         if channel not in LED_CHANNELS:
             raise ValueError(f"Ogiltig LED-kanal {channel}. Välj mellan {list(LED_CHANNELS.keys())}.")
 
         self.channel: int = channel
         self.verbose: bool = verbose
-        self.active_high: bool = active_high
+        self.active_high: bool = LED_ACTIVE_HIGH
         self.mapping: PinMapping = LED_CHANNELS[channel]
 
         self.bcm_pin: int = self.mapping.bcm
@@ -98,10 +98,6 @@ class LED:
 
         self._is_on = False
         self.is_connected = False
-
-    def close(self) -> None:
-        """Alias för disconnect()."""
-        self.disconnect()
 
     def on(self) -> bool:
         """
