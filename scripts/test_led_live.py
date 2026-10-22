@@ -1,6 +1,6 @@
 """
-Liveskript för att testa den nya LED-hårdvaruklassen (src/hardware/led.py).
-Tänder och släcker lamporna i ordning (Kanal 1 -> 2 -> 3 -> 4) en och en.
+Liveskript för att testa LEDController-fasaden (src/hardware/led_controller.py).
+Testar både sekventiell styrning (Kanal 1 -> 2 -> 3 -> 4) och gruppstyrning (all_on/all_off).
 
 Körs på pajen med:
     python3 scripts/test_led_live.py
@@ -15,33 +15,47 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.hardware.led import LED
+from src.hardware.led_controller import LEDController
 
 
 def main():
     print("=" * 60)
-    print("  Live-test: LED-drivrutin (Kanal 1 -> 2 -> 3 -> 4)")
+    print("  Live-test: LEDController (src/hardware/led_controller.py)")
     print("=" * 60)
 
-    channels = [1, 2, 3, 4]
+    with LEDController(verbose=True) as leds:
+        if not leds.is_connected:
+            print("\n[Varning] Inte alla LED-kanaler kunde ansluta till hårdvaran.")
+            print("Kontrollera att koden körs på Raspberry Pi med nödvändiga behörigheter.")
+            return
 
-    for ch in channels:
-        print(f"\n[Test] Förbereder LED Kanal {ch}...")
-        with LED(channel=ch, verbose=True) as led:
-            if not led.is_connected:
-                print(f"[Varning] Kunde inte ansluta till LED {ch}.")
-                continue
+        print("\nAlla 4 LED-kanaler är anslutna!")
 
-            print(f"       Tänder {led.description}...")
-            led.on()
-            time.sleep(0.6)
+        # Test 1: Sekventiell styrning (en och en)
+        print("\n--- Test 1: Sekventiell styrning (Kanal 1 -> 2 -> 3 -> 4) ---")
+        for ch in [1, 2, 3, 4]:
+            print(f"  --> Tänder LED Kanal {ch}...")
+            leds.on(ch)
+            time.sleep(0.5)
 
-            print(f"       Släcker {led.description}...")
-            led.off()
+            print(f"  --> Släcker LED Kanal {ch}...")
+            leds.off(ch)
             time.sleep(0.2)
 
+        time.sleep(0.5)
+
+        # Test 2: Gruppstyrning (alla samtidigt - stereo-läge)
+        print("\n--- Test 2: Gruppstyrning (Alla lampor tänds samtidigt) ---")
+        print("  --> leds.all_on()...")
+        leds.all_on()
+        time.sleep(0.8)
+
+        print("  --> leds.all_off()...")
+        leds.all_off()
+        time.sleep(0.2)
+
     print("\n" + "=" * 60)
-    print("  Klart! Alla lampor har blinkat och är släckta.")
+    print("  Klart! Både enskild och samlad styrning testad felfritt.")
     print("=" * 60 + "\n")
 
 
