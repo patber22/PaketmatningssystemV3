@@ -9,7 +9,12 @@ fotograferingssekvenser för både 3D-stereo och fotometrisk stereo.
 import time
 from typing import Any, Dict, Optional, Union
 
-from src.core.models import CameraFrame, CameraFramePair
+from src.core.models import (
+    CameraFrame,
+    CameraFramePair,
+    PhotometricSweep,
+    VisionCapture,
+)
 from src.hardware.camera_controller import CameraController
 from src.hardware.led_controller import LEDController
 
@@ -132,25 +137,22 @@ class VisionRig:
         gain: Optional[float] = None,
         samples: int = 1,
         method: str = "median",
-        camera_id: Optional[str] = None,
-    ) -> Dict[int, Union[CameraFramePair, CameraFrame]]:
+    ) -> PhotometricSweep:
         """
         Kör ett fotometriskt ljussvep över de 4 LED-armarna (Kanal 1 -> 2 -> 3 -> 4).
-        För varje lampa tas en bild och sparas i ett dictionary indexerat på kanalnummer.
+        För varje lampa tas ett stereobildpar och sparas i en PhotometricSweep.
 
         Args:
             exposure_us: Slutartid i mikrosekunder (None = self.photo_exposure_us).
             gain: Analog förstärkning (None = self.photo_gain).
             samples: Antal sampel per bild.
             method: Filtreringsmetod ('median' eller 'mean').
-            camera_id: Om specificerat ('CAM0' eller 'CAM1') tas enbart enkelbild.
-                       Om None tas stereobildpar för varje vinkel (för dubbel fotometri).
         """
         exp = exposure_us if exposure_us is not None else self.photo_exposure_us
         gn = gain if gain is not None else self.photo_gain
         self._apply_exposure(exp, gn)
 
-        results: Dict[int, Union[CameraFramePair, CameraFrame]] = {}
+        pairs: Dict[int, CameraFramePair] = {}
         self.leds.all_off()
 
         try:
@@ -159,20 +161,20 @@ class VisionRig:
                 if self.settle_time_s > 0:
                     time.sleep(self.settle_time_s)
 
-                if camera_id is not None:
-                    results[ch] = self.cameras.capture_single(
-                        camera_id=camera_id, samples=samples, method=method
-                    )
-                else:
-                    results[ch] = self.cameras.capture_both(
-                        samples=samples, method=method
-                    )
-
+                pairs[ch] = self.cameras.capture_both(
+                    samples=samples, method=method
+                )
                 self.leds.off(ch)
         finally:
             self.leds.all_off()
 
-        return results
+        return PhotometricSweep(
+            ch1=pairs.get(1, CameraFramePair.invalid()),
+            ch2=pairs.get(2, CameraFramePair.invalid()),
+            ch3=pairs.get(3, CameraFramePair.invalid()),
+            ch4=pairs.get(4, CameraFramePair.invalid()),
+            timestamp=time.time(),
+        )
 
     def capture_measurement_cycle(
         self,
@@ -183,15 +185,14 @@ class VisionRig:
         stereo_gain: Optional[float] = None,
         photo_exposure_us: Optional[int] = None,
         photo_gain: Optional[float] = None,
-        photo_camera_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> VisionCapture:
         """
         Kör en fullständig, optimerad datainsamlingssekvens för en paketmätning:
         1. Full Flash Stereo (12W belysning) med dedikerad stereo-exponering.
         2. Fotometriskt svep (Kanal 1-4) med dedikerad fotometri-exponering.
 
         Returnerar:
-            dict med 'stereo', 'photometric', 'timestamp' och 'is_valid'.
+            VisionCapture med 'stereo', 'photometric' och 'timestamp'.
         """
         t_start = time.time()
 
@@ -210,19 +211,13 @@ class VisionRig:
             gain=photo_gain,
             samples=photo_samples,
             method=method,
-            camera_id=photo_camera_id,
         )
 
-        # Validering
-        stereo_valid = stereo_pair.is_valid()
-        photo_valid = all(frame.is_valid() for frame in photo_sweep.values())
-
-        return {
-            "stereo": stereo_pair,
-            "photometric": photo_sweep,
-            "timestamp": t_start,
-            "is_valid": bool(stereo_valid and photo_valid),
-        }
+        return VisionCapture(
+            stereo=stereo_pair,
+            photometric=photo_sweep,
+            timestamp=t_start,
+        )
 
     def __enter__(self) -> "VisionRig":
         return self

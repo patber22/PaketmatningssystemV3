@@ -426,5 +426,150 @@ class WeightReading:
         return f"WeightReading: {self.to_dict()}"
 
 
+@dataclass
+class PhotometricSweep:
+    """
+    Representerar ett fotometriskt ljussvep över de fyra IR LED-kanalerna (Kanal 1-4).
+
+    Håller ett CameraFramePair för varje belysningsvinkel (eller enskild CameraFrame i vänster/höger).
+    """
+    ch1: CameraFramePair = field(default_factory=CameraFramePair.invalid)
+    ch2: CameraFramePair = field(default_factory=CameraFramePair.invalid)
+    ch3: CameraFramePair = field(default_factory=CameraFramePair.invalid)
+    ch4: CameraFramePair = field(default_factory=CameraFramePair.invalid)
+    timestamp: float = 0.0
+
+    def is_valid(self) -> bool:
+        """True om alla fyra kanalernas bildpar är giltiga."""
+        return bool(
+            self.ch1.is_valid()
+            and self.ch2.is_valid()
+            and self.ch3.is_valid()
+            and self.ch4.is_valid()
+        )
+
+    @classmethod
+    def invalid(cls) -> "PhotometricSweep":
+        """Null Object Pattern: Skapar ett tomt/ogiltigt fotometriskt svep."""
+        return cls(
+            ch1=CameraFramePair.invalid(),
+            ch2=CameraFramePair.invalid(),
+            ch3=CameraFramePair.invalid(),
+            ch4=CameraFramePair.invalid(),
+            timestamp=time.time(),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Konverterar svepets metadata till dictionary baserat på barnens to_dict()."""
+        return {
+            "is_valid": self.is_valid(),
+            "timestamp": self.timestamp,
+            "ch1": self.ch1.to_dict(),
+            "ch2": self.ch2.to_dict(),
+            "ch3": self.ch3.to_dict(),
+            "ch4": self.ch4.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PhotometricSweep":
+        """Skapar en PhotometricSweep från metadata-dictionary."""
+        if not isinstance(data, dict):
+            return cls.invalid()
+
+        try:
+            return cls(
+                ch1=CameraFramePair.from_dict(data.get("ch1", {})),
+                ch2=CameraFramePair.from_dict(data.get("ch2", {})),
+                ch3=CameraFramePair.from_dict(data.get("ch3", {})),
+                ch4=CameraFramePair.from_dict(data.get("ch4", {})),
+                timestamp=float(data.get("timestamp", 0.0)),
+            )
+        except (ValueError, TypeError):
+            return cls.invalid()
+
+    def get_channel(self, channel: int) -> CameraFramePair:
+        """Hämtar bildparet för en given kanal (1-4)."""
+        mapping = {1: self.ch1, 2: self.ch2, 3: self.ch3, 4: self.ch4}
+        if channel not in mapping:
+            raise ValueError(f"Ogiltig kanal {channel}. Välj 1, 2, 3 eller 4.")
+        return mapping[channel]
+
+    def to_jpeg(self, path: Union[str, Path] = Path(".")) -> Dict[int, Tuple[Optional[Path], Optional[Path]]]:
+        """Sparar alla fyra kanalernas bildpar till disk."""
+        target_dir = Path(path)
+        return {
+            1: self.ch1.to_jpeg(target_dir),
+            2: self.ch2.to_jpeg(target_dir),
+            3: self.ch3.to_jpeg(target_dir),
+            4: self.ch4.to_jpeg(target_dir),
+        }
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"PhotometricSweep: {self.to_dict()}"
+
+
+@dataclass
+class VisionCapture:
+    """
+    Representerar en komplett optisk datainsamling från mätbädden.
+
+    Innehåller både ett Full Flash-stereopar och ett fotometriskt ljussvep (Kanal 1-4).
+    """
+    stereo: CameraFramePair = field(default_factory=CameraFramePair.invalid)
+    photometric: PhotometricSweep = field(default_factory=PhotometricSweep.invalid)
+    timestamp: float = 0.0
+
+    def is_valid(self) -> bool:
+        """True om både stereoparet och det fotometriska svepet är giltiga."""
+        return bool(self.stereo.is_valid() and self.photometric.is_valid())
+
+    @classmethod
+    def invalid(cls) -> "VisionCapture":
+        """Null Object Pattern: Skapar en tom/ogiltig komplett optisk fångst."""
+        return cls(
+            stereo=CameraFramePair.invalid(),
+            photometric=PhotometricSweep.invalid(),
+            timestamp=time.time(),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Konverterar till dictionary baserat på underliggande to_dict()."""
+        return {
+            "is_valid": self.is_valid(),
+            "timestamp": self.timestamp,
+            "stereo": self.stereo.to_dict(),
+            "photometric": self.photometric.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "VisionCapture":
+        """Skapar en VisionCapture från metadata-dictionary."""
+        if not isinstance(data, dict):
+            return cls.invalid()
+
+        try:
+            return cls(
+                stereo=CameraFramePair.from_dict(data.get("stereo", {})),
+                photometric=PhotometricSweep.from_dict(data.get("photometric", {})),
+                timestamp=float(data.get("timestamp", 0.0)),
+            )
+        except (ValueError, TypeError):
+            return cls.invalid()
+
+    def to_jpeg(self, path: Union[str, Path] = Path(".")) -> Dict[str, Any]:
+        """Sparar både stereopar och fotometriskt svep till disk."""
+        target_dir = Path(path)
+        return {
+            "stereo": self.stereo.to_jpeg(target_dir),
+            "photometric": self.photometric.to_jpeg(target_dir),
+        }
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"VisionCapture: {self.to_dict()}"
+
+
+
 
 
