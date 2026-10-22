@@ -84,8 +84,8 @@ TOF_PINS = {
 # ==============================================================================
 
 CAMERAS = {
-    "CAM0": {"port": 0, "description": "NoIR Kamera Vänster (CSI0)"},
-    "CAM1": {"port": 1, "description": "NoIR Kamera Höger (CSI1)"},
+    "CAM0": {"port": 0, "description": "NoIR Kamera Höger (CSI0)"},
+    "CAM1": {"port": 1, "description": "NoIR Kamera Vänster (CSI1)"},
 }
 
 
