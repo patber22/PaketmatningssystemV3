@@ -1,13 +1,13 @@
 """
 Kalibreringsverktyg för Paketmätningssystemets våg (src/hardware/scale.py).
 
-Guidad kalibrering i terminalen:
-1. Startar vågen okalibrerad (via dummy-sökväg).
-2. Samlar in 25 råvärden för tom våg (tara).
-3. Samlar in 25 råvärden med en känd referensvikt.
-4. Beräknar skalfaktorn (delta_counts / ref_weight_g).
+Använder Scale-klassens publika API:
+1. Skapar en Scale-instans med en dummy-sökväg och buffer_size=30 (okalibrerat läge).
+2. Tömmer vågen -> anropar read(samples=25) -> tar ut råa medianvärdet (tare_offset_raw).
+3. Placerar referensvikt -> anropar read(samples=25) -> tar ut råa medianvärdet (raw_with_weight).
+4. Beräknar skalfaktorn: (raw_with_weight - tare_offset_raw) / ref_weight_g.
 5. Sparar kalibreringen till config/calibration/data/scale.json.
-6. Laddar den nya kalibreringen och live-verifierar vikten.
+6. Laddar om den riktiga sökvägen via load_calibration() och live-verifierar.
 
 Körs med:
     python3 calibration/calibrate_scale.py
@@ -18,8 +18,6 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import List
-import numpy as np
 
 # Säkerställ att projektroten finns i sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -41,34 +39,17 @@ TARGET_CONFIG_PATH = os.path.abspath(
 DUMMY_CONFIG_PATH = "/dummy/uncalibrated.json"
 
 
-def collect_raw_samples(scale: Scale, count: int = 25, timeout_s: float = 4.0) -> List[int]:
-    """Samlar in 'count' unika råa ADC-mätningar från lastcellerna."""
-    collected: List[int] = []
-    start_time = time.time()
-
-    while len(collected) < count and (time.time() - start_time) < timeout_s:
-        with scale._lock:
-            if scale._latest_raw is not None and (not collected or collected[-1] != scale._latest_raw):
-                collected.append(scale._latest_raw)
-        
-        # Visa progressindikator
-        print(f"\r  Mäter... [{len(collected)}/{count} prover insamlade]", end="", flush=True)
-        time.sleep(0.05)
-
-    print()  # Ny rad efter progress
-    return collected
-
-
 def main():
     print("=" * 65)
     print("  Kalibreringsverktyg: Paketvåg (ESP32-C3 / HX711)")
     print("=" * 65)
     print(f"Målfil: {TARGET_CONFIG_PATH}\n")
 
-    # 1. Starta vågen i ett rent, okalibrerat läge
+    # 1. Starta vågen i okalibrerat läge med plats för 30 prover i bufferten
     print("[1/5] Ansluter till vågmodulen...")
     scale = Scale(
         config_path=DUMMY_CONFIG_PATH,
+        buffer_size=30,
         auto_connect=True,
         verbose=False,
     )
@@ -79,23 +60,26 @@ def main():
         return
 
     try:
-        print(f"[OK] Ansluten på {scale.port}. Startar i okalibrerat läge.\n")
-        time.sleep(0.5)
+        print(f"[OK] Ansluten på {scale.port}. Startad i okalibrerat läge.\n")
 
-        # 2. Steg 1: Nollställning (Tara)
+        # 2. Steg 1: Nollställning (Tom mätbädd)
         print("-" * 65)
         print("STEG 1: Nollställning (Tom mätbädd)")
         print("-" * 65)
         print("Se till att vågen är helt tom och fri från vibrationer.")
-        input("Tryck ENTER när mätbädden är tom för att mäta nollpunkten...")
+        input("Tryck ENTER när mätbädden är tom...")
 
-        zero_samples = collect_raw_samples(scale, count=25)
-        if len(zero_samples) < 5:
-            print("\n[FEL] Kunde inte samla in tillräckligt med rådata för nollpunkten.")
+        print("Samlar in 25 mätpunkter för nollpunkten...")
+        # Vänta så bufferten hinner fyllas med 25 färska prover (~2.5s vid 10 Hz)
+        time.sleep(2.6)
+        zero_reading = scale.read(samples=25)
+
+        if zero_reading.samples < 10:
+            print(f"\n[FEL] Fick bara {zero_reading.samples} prover. Kontrollera serieporten.")
             return
 
-        tare_offset_raw = float(np.median(zero_samples))
-        print(f"[OK] Nollpunkt fastställd till: {tare_offset_raw:.0f} counts\n")
+        tare_offset_raw = float(zero_reading.raw_value)
+        print(f"[OK] Nollpunkt fastställd till: {tare_offset_raw:.0f} counts (baserat på {zero_reading.samples} prover)\n")
 
         # 3. Steg 2: Referensvikt
         print("-" * 65)
@@ -116,13 +100,17 @@ def main():
 
         input(f"Placera vikten ({ref_weight_g:.1f} g) på vågen och tryck ENTER när den ligger stilla...")
 
-        weight_samples = collect_raw_samples(scale, count=25)
-        if len(weight_samples) < 5:
-            print("\n[FEL] Kunde inte samla in tillräckligt med rådata med referensvikten.")
+        print("Samlar in 25 mätpunkter med referensvikten...")
+        # Vänta så bufferten spolas med 25 färska prover från vikten
+        time.sleep(2.6)
+        weight_reading = scale.read(samples=25)
+
+        if weight_reading.samples < 10:
+            print(f"\n[FEL] Fick bara {weight_reading.samples} prover med referensvikten.")
             return
 
-        raw_with_weight = float(np.median(weight_samples))
-        print(f"[OK] Råvärde med referensvikt: {raw_with_weight:.0f} counts\n")
+        raw_with_weight = float(weight_reading.raw_value)
+        print(f"[OK] Råvärde med referensvikt: {raw_with_weight:.0f} counts (baserat på {weight_reading.samples} prover)\n")
 
         # 4. Steg 3: Beräkning & Rimlighetskontroll
         print("-" * 65)
@@ -164,7 +152,7 @@ def main():
             print("[VARNING] Kunde inte ladda om den sparade kalibreringen i Scale-objektet.")
             return
 
-        print("Laddade in nya parametrarna i Scale! Verifierar i 4 sekunder...")
+        print("Laddade in de nya parametrarna i Scale! Verifierar i 4 sekunder...")
         time.sleep(0.5)
 
         for _ in range(10):
