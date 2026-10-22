@@ -6,9 +6,12 @@ serialisering (to_dict/from_dict) och tidslogik.
 
 import time
 import unittest
+import tempfile
+from pathlib import Path
 
 from src.core.models import ToFReading, BarcodeReading, CameraFrame
 import numpy as np
+import cv2
 
 
 class TestToFReading(unittest.TestCase):
@@ -252,6 +255,44 @@ class TestCameraFrame(unittest.TestCase):
         """Verifiera att __str__ returnerar en läsbar sträng."""
         frame = CameraFrame.invalid()
         self.assertIn("CameraFrame", str(frame))
+
+    def test_to_jpeg_valid_image(self):
+        """Verifiera att to_jpeg sparar giltiga JPEG-filer med rätt namn och innehåll."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            dummy_img = np.full((100, 150, 3), 128, dtype=np.uint8)
+            frame = CameraFrame(
+                image=dummy_img,
+                camera_id="CAM0",
+                timestamp=1728842400.0,
+                resolution=(150, 100),
+                exposure_us=25000,
+                gain=4.0,
+                _is_valid=True,
+            )
+
+            # Test 1: Spara med automatisk namngivning i katalog
+            saved = frame.to_jpeg(path=tmp_path)
+            self.assertIsNotNone(saved)
+            self.assertTrue(saved.exists())
+            self.assertEqual(saved.name, "1728842400_CAM0.jpg")
+
+            # Kontrollera att filen går att läsa och har rätt dimensioner
+            read_img = cv2.imread(str(saved))
+            self.assertIsNotNone(read_img)
+            self.assertEqual(read_img.shape, (100, 150, 3))
+
+            # Test 2: Spara med explicit filnamn
+            explicit = frame.to_jpeg(path=tmp_path / "custom_test.jpg")
+            self.assertIsNotNone(explicit)
+            self.assertTrue(explicit.exists())
+            self.assertEqual(explicit.name, "custom_test.jpg")
+
+    def test_to_jpeg_invalid_frame(self):
+        """Verifiera att to_jpeg returnerar None för en ogiltig bildram."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            inv = CameraFrame.invalid()
+            self.assertIsNone(inv.to_jpeg(path=tmp_dir))
 
 
 
