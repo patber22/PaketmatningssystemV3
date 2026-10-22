@@ -359,4 +359,72 @@ class CameraFramePair:
         return f"CameraFramePair: {self.to_dict()}"
 
 
+@dataclass
+class WeightReading:
+    """
+    Representerar en avläsning från paketvågen (ESP32-C3 / HX711).
+
+    Håller vikten i gram, stabilitetsflagga, tidsstämpel och råvärde för tara/kalibrering.
+    """
+    weight_g: float = -1.0              # Uppmätt vikt i gram (t.ex. 1250.0, -1.0 vid fel)
+    is_stable: bool = False             # True om vikten har stabiliserats (låg varians över tid)
+    timestamp: float = 0.0              # UNIX-tidsstämpel i sekunder (time.time())
+    samples: int = 1                    # Antal råmätningar som använts för filtrering
+    raw_value: int = 0                  # Obehandlat ADC-råvärde från HX711
+    _is_valid: bool = False             # Intern hårdvaruflagg
+
+    def is_valid(self) -> bool:
+        """
+        Enhetlig metod för att kontrollera giltighet.
+        Returnerar True om mätvärdet är godkänt och större än eller lika med 0 gram.
+        """
+        return bool(self._is_valid and self.weight_g >= 0.0)
+
+    @classmethod
+    def invalid(cls) -> "WeightReading":
+        """Null Object Pattern: Skapar en standardiserad ogiltig viktavläsning utan argument."""
+        return cls(
+            weight_g=-1.0,
+            is_stable=False,
+            timestamp=time.time(),
+            samples=0,
+            raw_value=0,
+            _is_valid=False,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Konverterar viktavläsningen till en ren dictionary för loggar och export."""
+        return {
+            "weight_g": round(self.weight_g, 1) if self.weight_g >= 0.0 else -1.0,
+            "is_stable": self.is_stable,
+            "is_valid": self.is_valid(),
+            "timestamp": self.timestamp,
+            "samples": self.samples,
+            "raw_value": self.raw_value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WeightReading":
+        """Skapar en WeightReading från en dictionary."""
+        if not isinstance(data, dict):
+            return cls.invalid()
+
+        try:
+            return cls(
+                weight_g=float(data.get("weight_g", -1.0)),
+                is_stable=bool(data.get("is_stable", False)),
+                timestamp=float(data.get("timestamp", 0.0)),
+                samples=int(data.get("samples", 1)),
+                raw_value=int(data.get("raw_value", 0)),
+                _is_valid=bool(data.get("is_valid", False)),
+            )
+        except (ValueError, TypeError):
+            return cls.invalid()
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"WeightReading: {self.to_dict()}"
+
+
+
 
