@@ -165,16 +165,20 @@ class VisionRig:
                     samples=samples, method=method
                 )
                 self.leds.off(ch)
+
+            return PhotometricSweep(
+                ch1=pairs[1],
+                ch2=pairs[2],
+                ch3=pairs[3],
+                ch4=pairs[4],
+                timestamp=time.time(),
+            )
+        except Exception as e:
+            if self.verbose:
+                print(f"[VisionRig] Fel under fotometriskt svep: {e}")
+            return PhotometricSweep.invalid()
         finally:
             self.leds.all_off()
-
-        return PhotometricSweep(
-            ch1=pairs.get(1, CameraFramePair.invalid()),
-            ch2=pairs.get(2, CameraFramePair.invalid()),
-            ch3=pairs.get(3, CameraFramePair.invalid()),
-            ch4=pairs.get(4, CameraFramePair.invalid()),
-            timestamp=time.time(),
-        )
 
     def capture_measurement_cycle(
         self,
