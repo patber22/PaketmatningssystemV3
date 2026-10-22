@@ -10,7 +10,7 @@ Använder Scale-klassens publika API:
 6. Laddar om den riktiga sökvägen via load_calibration() och live-verifierar.
 
 Körs med:
-    python3 calibration/calibrate_scale.py
+    python3 config/calibration/calibrate_scale.py
 """
 
 import json
@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 # Säkerställ att projektroten finns i sys.path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -29,9 +29,6 @@ from src.hardware.scale import Scale
 TARGET_CONFIG_PATH = os.path.abspath(
     os.path.join(
         os.path.dirname(__file__),
-        "..",
-        "config",
-        "calibration",
         "data",
         "scale.json",
     )
