@@ -9,11 +9,7 @@ import time
 from typing import Any, Dict, Optional, Tuple, Union
 import numpy as np
 
-try:
-    import cv2
-    HAS_CV2 = True
-except ImportError:
-    HAS_CV2 = False
+import cv2
 
 
 @dataclass
@@ -259,9 +255,6 @@ class CameraFrame:
         """
         if not self.is_valid() or self.image is None:
             return None
-
-        if not HAS_CV2:
-            raise ImportError("OpenCV ('cv2') krävs för att spara JPEG-bilder via to_jpeg().")
 
         try:
             target_path = Path(path)
