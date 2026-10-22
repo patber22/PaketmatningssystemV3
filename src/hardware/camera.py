@@ -16,10 +16,7 @@ try:
 except ImportError:
     HAS_PICAM2 = False
 
-try:
-    import numpy as np
-except ImportError:
-    np = None  # type: ignore
+import numpy as np
 
 
 class Camera:
@@ -140,10 +137,10 @@ class Camera:
                 print(f"[{self.camera_id}] FEL vid ändring av exponering: {e}")
             return False
 
-    def capture(self, samples: int = 1, method: str = "none") -> CameraFrame:
+    def capture(self, samples: int = 1, method: str = "median") -> CameraFrame:
         """
         Hämtar den färskaste bildrutan direkt ur RAM via Picamera2.
-        Vid samples > 1 samlas N bildrutor in och filtreras över tid (t.ex. median).
+        Vid samples > 1 samlas N bildrutor in och filtreras över tid (standard: median).
         """
         if not self.is_connected or self._picam2 is None:
             if self.verbose:
@@ -151,35 +148,18 @@ class Camera:
             return CameraFrame.invalid()
 
         try:
-            if samples <= 1:
-                # Nyp nästa färska bildruta ur sensorns ström
-                raw_arr = self._picam2.capture_array("main")
-                return CameraFrame(
-                    image=raw_arr,
-                    camera_id=self.camera_id,
-                    timestamp=time.time(),
-                    resolution=self.resolution,
-                    exposure_us=self.exposure_us,
-                    gain=self.gain,
-                    samples=1,
-                    sample_method="none",
-                    _is_valid=True,
-                )
-
-            # Fler än 1 sample: samla in N färska rutor
+            samples = max(1, samples)
             frames = [self._picam2.capture_array("main") for _ in range(samples)]
 
-            if np is not None:
+            if samples == 1:
+                final_img = frames[0]
+            else:
                 stack = np.stack(frames, axis=0)
                 m = method.lower()
-                if m == "median":
-                    final_img = np.median(stack, axis=0).astype(np.uint8)
-                elif m in ["mean", "average"]:
+                if m in ["mean", "average"]:
                     final_img = np.mean(stack, axis=0).astype(np.uint8)
                 else:
-                    final_img = frames[-1]
-            else:
-                final_img = frames[-1]
+                    final_img = np.median(stack, axis=0).astype(np.uint8)
 
             return CameraFrame(
                 image=final_img,
@@ -189,7 +169,7 @@ class Camera:
                 exposure_us=self.exposure_us,
                 gain=self.gain,
                 samples=samples,
-                sample_method=method,
+                sample_method=method if samples > 1 else "none",
                 _is_valid=True,
             )
 
