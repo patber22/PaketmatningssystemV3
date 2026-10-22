@@ -4,13 +4,16 @@ Håller standardiserade datastrukturer oberoende av hårdvarudrivrutiner.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
+import numpy as np
 
 try:
-    import numpy as np
+    import cv2
+    HAS_CV2 = True
 except ImportError:
-    np = None  # type: ignore
+    HAS_CV2 = False
 
 
 @dataclass
@@ -238,6 +241,56 @@ class CameraFrame:
             )
         except (ValueError, TypeError):
             return cls.invalid()
+
+    def to_jpeg(
+        self,
+        path: Union[str, Path] = Path("."),
+        filename: Optional[str] = None
+    ) -> Optional[Path]:
+        """
+        Sparar bildmatrisen som en JPEG-fil på angiven sökväg.
+
+        - Om path är en katalog eller om filnamn saknas:
+          Genererar filnamn: '{int(timestamp)}_{camera_id}.jpg'.
+        - Om path är en fullständig sökväg som slutar på .jpg/.jpeg används den direkt.
+
+        Hanterar färgkonvertering (RGB till BGR) automatiskt för OpenCV.
+        Returnerar Path till den sparade filen, eller None vid ogiltig bild eller fel.
+        """
+        if not self.is_valid() or self.image is None:
+            return None
+
+        if not HAS_CV2:
+            raise ImportError("OpenCV ('cv2') krävs för att spara JPEG-bilder via to_jpeg().")
+
+        try:
+            target_path = Path(path)
+
+            # Avgör om target_path är en fil eller katalog
+            if target_path.suffix.lower() in [".jpg", ".jpeg"]:
+                out_file = target_path
+            else:
+                target_path.mkdir(parents=True, exist_ok=True)
+                if filename is None:
+                    cid = f"_{self.camera_id}" if self.camera_id else ""
+                    ts = int(self.timestamp) if self.timestamp > 0 else int(time.time())
+                    filename = f"{ts}{cid}.jpg"
+                out_file = target_path / filename
+
+            # Säkerställ att föräldrakatalogen finns
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Konvertera färger om det är en 3-kanals RGB-bild (Picamera2 RGB888 -> OpenCV BGR)
+            if len(self.image.shape) == 3 and self.image.shape[2] == 3:
+                bgr_img = cv2.cvtColor(self.image, cv2.COLOR_RGB2BGR)
+            else:
+                bgr_img = self.image
+
+            success = cv2.imwrite(str(out_file), bgr_img)
+            return out_file if success else None
+
+        except Exception:
+            return None
 
     def __str__(self) -> str:
         """Kompakt strängrepresentation baserad på to_dict()."""
