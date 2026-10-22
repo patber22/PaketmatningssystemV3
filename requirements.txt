@@ -8,3 +8,6 @@ numpy>=1.24.0
 
 # Asynkron USB HID-avläsning för streckkodsläsare (Linux evdev)
 evdev>=1.6.0; sys_platform == 'linux'
+
+# GPIO-styrning för LED-stroboskop (Raspberry Pi)
+gpiozero>=2.0; sys_platform == 'linux'
