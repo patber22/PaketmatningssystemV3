@@ -9,7 +9,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from src.core.models import ToFReading, BarcodeReading, CameraFrame, CameraFramePair
+from src.core.models import ToFReading, BarcodeReading, CameraFrame, CameraFramePair, WeightReading
 import numpy as np
 import cv2
 
@@ -367,6 +367,78 @@ class TestCameraFramePair(unittest.TestCase):
         """Verifiera att __str__ returnerar en läsbar sträng."""
         pair = CameraFramePair.invalid()
         self.assertIn("CameraFramePair", str(pair))
+
+
+class TestWeightReading(unittest.TestCase):
+    """Testsvit för WeightReading dataklassen."""
+
+    def test_default_values(self):
+        """Verifiera standardvärden för tom WeightReading."""
+        w = WeightReading()
+        self.assertEqual(w.weight_g, -1.0)
+        self.assertFalse(w.is_valid())
+        self.assertFalse(w.is_stable)
+        self.assertEqual(w.timestamp, 0.0)
+        self.assertEqual(w.samples, 1)
+        self.assertEqual(w.raw_value, 0)
+
+    def test_invalid_factory(self):
+        """Verifiera att invalid() skapar en ogiltig instans utan argument."""
+        inv = WeightReading.invalid()
+        self.assertEqual(inv.weight_g, -1.0)
+        self.assertFalse(inv.is_valid())
+        self.assertFalse(inv.is_stable)
+        self.assertGreater(inv.timestamp, 0.0)
+
+    def test_valid_readings(self):
+        """Verifiera giltighetskriterier (0 gram och positiva vikter)."""
+        # 0.0g är en giltig tarerad mätning
+        w_zero = WeightReading(weight_g=0.0, _is_valid=True)
+        self.assertTrue(w_zero.is_valid())
+
+        # Positiv vikt
+        w_pkg = WeightReading(weight_g=1250.5, is_stable=True, _is_valid=True)
+        self.assertTrue(w_pkg.is_valid())
+        self.assertTrue(w_pkg.is_stable)
+
+        # Negativ vikt ska räknas som ogiltig
+        w_neg = WeightReading(weight_g=-5.0, _is_valid=True)
+        self.assertFalse(w_neg.is_valid())
+
+    def test_to_dict_and_from_dict(self):
+        """Verifiera serialisering av WeightReading till och från dict."""
+        original = WeightReading(
+            weight_g=2450.78,
+            is_stable=True,
+            timestamp=1728842400.0,
+            samples=5,
+            raw_value=123456,
+            _is_valid=True,
+        )
+        data = original.to_dict()
+        self.assertEqual(data["weight_g"], 2450.8)
+        self.assertTrue(data["is_stable"])
+        self.assertTrue(data["is_valid"])
+        self.assertEqual(data["raw_value"], 123456)
+        self.assertEqual(data["samples"], 5)
+
+        restored = WeightReading.from_dict(data)
+        self.assertTrue(restored.is_valid())
+        self.assertEqual(restored.weight_g, 2450.8)
+        self.assertTrue(restored.is_stable)
+        self.assertEqual(restored.raw_value, 123456)
+
+    def test_from_dict_malformed(self):
+        """Verifiera att felaktiga indata till from_dict ger ogiltigt objekt."""
+        inv = WeightReading.from_dict(None)  # type: ignore
+        self.assertFalse(inv.is_valid())
+        self.assertEqual(inv.weight_g, -1.0)
+
+    def test_str_representation(self):
+        """Verifiera att __str__ returnerar en läsbar sträng."""
+        w = WeightReading.invalid()
+        self.assertIn("WeightReading", str(w))
+
 
 
 
