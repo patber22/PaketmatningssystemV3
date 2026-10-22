@@ -7,7 +7,8 @@ serialisering (to_dict/from_dict) och tidslogik.
 import time
 import unittest
 
-from src.core.models import ToFReading, BarcodeReading
+from src.core.models import ToFReading, BarcodeReading, CameraFrame
+import numpy as np
 
 
 class TestToFReading(unittest.TestCase):
@@ -172,6 +173,86 @@ class TestBarcodeReading(unittest.TestCase):
         r = BarcodeReading.from_dict(None)  # type: ignore
         self.assertFalse(r.is_valid())
         self.assertEqual(r.code, "")
+
+
+class TestCameraFrame(unittest.TestCase):
+    """Testsvit för CameraFrame dataklassen."""
+
+    def test_default_values(self):
+        """Verifiera att en tom CameraFrame har säkra standardvärden och är ogiltig."""
+        frame = CameraFrame()
+        self.assertIsNone(frame.image)
+        self.assertEqual(frame.camera_id, "")
+        self.assertFalse(frame.is_valid())
+        self.assertEqual(frame.resolution, (0, 0))
+        self.assertEqual(frame.exposure_us, 0)
+        self.assertEqual(frame.gain, 0.0)
+
+    def test_invalid_factory(self):
+        """Verifiera att invalid() skapar en ogiltig instans utan argument."""
+        inv = CameraFrame.invalid()
+        self.assertIsNone(inv.image)
+        self.assertEqual(inv.camera_id, "")
+        self.assertFalse(inv.is_valid())
+        self.assertGreater(inv.timestamp, 0.0)
+
+    def test_valid_frame(self):
+        """Verifiera att en komplett instans med bildmatris är giltig."""
+        dummy_img = np.zeros((1232, 1640, 3), dtype=np.uint8)
+        frame = CameraFrame(
+            image=dummy_img,
+            camera_id="CAM0",
+            timestamp=time.time(),
+            resolution=(1640, 1232),
+            exposure_us=25000,
+            gain=4.0,
+            samples=1,
+            sample_method="none",
+            _is_valid=True,
+        )
+        self.assertTrue(frame.is_valid())
+        self.assertEqual(frame.camera_id, "CAM0")
+        self.assertEqual(frame.exposure_us, 25000)
+
+    def test_to_dict_and_from_dict(self):
+        """Verifiera serialisering av metadata till/från dict."""
+        dummy_img = np.zeros((480, 640), dtype=np.uint8)
+        original = CameraFrame(
+            image=dummy_img,
+            camera_id="CAM1",
+            timestamp=1728842400.0,
+            resolution=(640, 480),
+            exposure_us=30000,
+            gain=2.5,
+            samples=3,
+            sample_method="median",
+            _is_valid=True,
+        )
+        data = original.to_dict()
+        self.assertEqual(data["camera_id"], "CAM1")
+        self.assertTrue(data["is_valid"])
+        self.assertTrue(data["has_image"])
+        self.assertEqual(data["image_shape"], [480, 640])
+        self.assertEqual(data["image_dtype"], "uint8")
+
+        # Återskapa från dict
+        restored = CameraFrame.from_dict(data, image=dummy_img)
+        self.assertTrue(restored.is_valid())
+        self.assertEqual(restored.camera_id, "CAM1")
+        self.assertEqual(restored.exposure_us, 30000)
+        self.assertEqual(restored.sample_method, "median")
+
+    def test_from_dict_malformed(self):
+        """Verifiera att felaktiga indata till from_dict ger CameraFrame.invalid()."""
+        inv = CameraFrame.from_dict(None)  # type: ignore
+        self.assertFalse(inv.is_valid())
+        self.assertIsNone(inv.image)
+
+    def test_str_representation(self):
+        """Verifiera att __str__ returnerar en läsbar sträng."""
+        frame = CameraFrame.invalid()
+        self.assertIn("CameraFrame", str(frame))
+
 
 
 if __name__ == "__main__":
