@@ -5,7 +5,12 @@ Håller standardiserade datastrukturer oberoende av hårdvarudrivrutiner.
 
 from dataclasses import dataclass
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
+
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore
 
 
 @dataclass
@@ -146,5 +151,96 @@ class BarcodeReading:
     def __str__(self) -> str:
         """Kompakt strängrepresentation baserad på to_dict()."""
         return f"BarcodeReading: {self.to_dict()}"
+
+
+@dataclass
+class CameraFrame:
+    """
+    Representerar en tagen bildruta från en NoIR-kamera (CAM0 eller CAM1).
+
+    Håller bildmatrisen (NumPy ndarray) i RAM samt optisk och tidsmässig metadata.
+    """
+    image: Optional[Any] = None              # Bildmatrisen (H, W, C) eller (H, W) som t.ex. np.ndarray
+    camera_id: str = ""                      # "CAM0" (Höger) eller "CAM1" (Vänster)
+    timestamp: float = 0.0                   # UNIX-tidsstämpel i sekunder (time.time())
+    resolution: tuple = (0, 0)               # (Bredd, Höjd), t.ex. (1640, 1232)
+    exposure_us: int = 0                     # Slutartid i mikrosekunder (t.ex. 25000 för 25 ms)
+    gain: float = 0.0                        # Analog/digital förstärkning
+    samples: int = 1                         # Antal samplade bildrutor för tidsfilter
+    sample_method: str = "none"              # Tidsfilter: 'none', 'median' eller 'mean'
+    _is_valid: bool = False                  # Intern flagga för hårdvaru-OK
+
+    def is_valid(self) -> bool:
+        """True om bilden finns i RAM, är en giltig matris och flaggats som giltig."""
+        if not self._is_valid or self.image is None:
+            return False
+        if np is not None and isinstance(self.image, np.ndarray):
+            return bool(self.image.size > 0)
+        return True
+
+    @classmethod
+    def invalid(cls) -> "CameraFrame":
+        """Null Object Pattern: Skapar en standardiserad tom/ogiltig bildram utan argument."""
+        return cls(
+            image=None,
+            camera_id="",
+            timestamp=time.time(),
+            resolution=(0, 0),
+            exposure_us=0,
+            gain=0.0,
+            samples=0,
+            sample_method="none",
+            _is_valid=False,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialiserar metadata för loggar och JSON.
+        Obs: Själva råbilden sparas som shape och dtype istället för megabyte av rådata.
+        """
+        has_img = self.image is not None
+        img_shape = list(self.image.shape) if has_img and hasattr(self.image, "shape") else None
+        img_dtype = str(self.image.dtype) if has_img and hasattr(self.image, "dtype") else None
+        return {
+            "camera_id": self.camera_id,
+            "is_valid": self.is_valid(),
+            "timestamp": self.timestamp,
+            "resolution": list(self.resolution) if isinstance(self.resolution, (tuple, list)) else [0, 0],
+            "exposure_us": self.exposure_us,
+            "gain": self.gain,
+            "samples": self.samples,
+            "sample_method": self.sample_method,
+            "has_image": bool(has_img),
+            "image_shape": img_shape,
+            "image_dtype": img_dtype,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], image: Optional[Any] = None) -> "CameraFrame":
+        """Skapar en CameraFrame från dictionary och valfri separat bildmatris."""
+        if not isinstance(data, dict):
+            return cls.invalid()
+
+        try:
+            res_raw = data.get("resolution", [0, 0])
+            resolution = tuple(res_raw) if isinstance(res_raw, (list, tuple)) else (0, 0)
+            is_valid_flag = bool(data.get("is_valid", False))
+            return cls(
+                image=image,
+                camera_id=str(data.get("camera_id", "")),
+                timestamp=float(data.get("timestamp", 0.0)),
+                resolution=resolution,
+                exposure_us=int(data.get("exposure_us", 0)),
+                gain=float(data.get("gain", 0.0)),
+                samples=int(data.get("samples", 1)),
+                sample_method=str(data.get("sample_method", "none")),
+                _is_valid=is_valid_flag and (image is not None),
+            )
+        except (ValueError, TypeError):
+            return cls.invalid()
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"CameraFrame: {self.to_dict()}"
 
 
