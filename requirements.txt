@@ -14,3 +14,6 @@ gpiozero>=2.0; sys_platform == 'linux'
 
 # Datorseende, bildanalys, bildsparande och stereomatchning (OpenCV)
 opencv-python>=4.8.0
+
+# Serieports-kommunikation med ESP32-C3 / HX711 vågmodul
+pyserial>=3.5
