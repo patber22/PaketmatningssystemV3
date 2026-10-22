@@ -203,7 +203,7 @@ class Scale:
                 if not line:
                     continue
 
-                # Matcha formatet RAW:<tal> eller rent heltal
+                # Matcha formatet RAW:<tal> eller rent heltal (TODO: ändra ESP-firmware till rena tal i framtiden)
                 raw_val = None
                 if line.startswith("RAW:"):
                     raw_str = line.split("RAW:", 1)[1].strip()
@@ -271,23 +271,23 @@ class Scale:
         recent_samples = buf[-min(samples, len(buf)):]
         med_raw = float(np.median(recent_samples))
 
-        # Kontrollera stabilitet (standardavvikelse på bufferten i gram)
-        if len(buf) >= 4 and abs(self.scale_factor) > 1e-4:
-            weights_in_buf = [(r - self.tare_offset_raw) / self.scale_factor for r in buf]
-            std_g = float(np.std(weights_in_buf))
-            is_stable = bool(std_g < self.stability_threshold_g)
-        else:
+        # Kontrollera att vi har en giltig skalfaktor (undvik division med noll)
+        if abs(self.scale_factor) < 1e-4:
+            weight_g = 0.0
             is_stable = False
-
-        # Beräkna vikt i gram
-        if abs(self.scale_factor) > 1e-4:
-            weight_g = (med_raw - self.tare_offset_raw) / self.scale_factor
         else:
-            weight_g = 0.0
+            weight_g = (med_raw - self.tare_offset_raw) / self.scale_factor
+            # Klipp bort små mikrogram-negativa fluktuationer kring nollan (+/- 2g dödband)
+            if abs(weight_g) < 2.0:
+                weight_g = 0.0
 
-        # Klipp bort små mikrogram-negativa fluktuationer kring nollan (+/- 2g dödband)
-        if abs(weight_g) < 2.0:
-            weight_g = 0.0
+            # Stabilitet kräver minst 4 observationer för statistisk signifikans
+            if len(buf) >= 4:
+                weights_in_buf = [(r - self.tare_offset_raw) / self.scale_factor for r in buf]
+                std_g = float(np.std(weights_in_buf))
+                is_stable = bool(std_g < self.stability_threshold_g)
+            else:
+                is_stable = False
 
         # Sätt intern giltighetsflagga baserat på kalibrering och icke-negativ vikt
         _is_valid = bool(self.is_calibrated and weight_g >= 0.0)
