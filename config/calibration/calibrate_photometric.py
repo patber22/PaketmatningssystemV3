@@ -26,9 +26,9 @@ BALL_DIAMETER_MM: float = 40.0   # Standard bordtennisboll (40.0 mm)
 BALL_RADIUS_PX: float = 40.5     # Nominell optisk radie i pixlar vid ~630 mm avstånd
 
 # Manuella koordinater (cx, cy, radie_px). Sätt till None för automatisk detektering.
-# Vid behov kan du låsa positionen manuellt här:
-MANUAL_SPHERE_LEFT: Optional[Tuple[float, float, float]] = (869.0, 519.5, 40.5)
-MANUAL_SPHERE_RIGHT: Optional[Tuple[float, float, float]] = (712.2, 547.2, 40.0)
+# Vid behov kan man överstyra manuellt här (t.ex. vid extremt svåra ljusförhållanden):
+MANUAL_SPHERE_LEFT: Optional[Tuple[float, float, float]] = None
+MANUAL_SPHERE_RIGHT: Optional[Tuple[float, float, float]] = None
 
 # ==============================================================================
 # SÖKVÄGAR OCH IMPORTER
