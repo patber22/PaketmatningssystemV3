@@ -42,8 +42,38 @@ OUTPUT_FILE = OUTPUT_DIR / "stereo.json"
 IMAGE_SAVE_DIR = PROJECT_ROOT / "data" / "calibration" / "stereo" / time.strftime("%Y%m%d_%H%M%S")
 
 
+def check_key():
+    """Icke-blockerande tangentkontroll för Linux (Raspberry Pi) och Windows."""
+    if sys.platform == "win32":
+        import msvcrt
+        if msvcrt.kbhit():
+            ch = msvcrt.getch()
+            if ch in [b"\r", b"\n", b" "]:
+                return "enter"
+            elif ch in [b"q", b"Q"]:
+                return "q"
+        return None
+    else:
+        import select
+        r, _, _ = select.select([sys.stdin], [], [], 0)
+        if r:
+            line = sys.stdin.readline().strip().lower()
+            if line == "q":
+                return "q"
+            return "enter"
+        return None
+
+
+def check_corners_fast(gray_img: np.ndarray, pattern_size: tuple) -> bool:
+    """Blixtsnabb hörnkontroll (10-15ms) på nedsamplad bild för smidig realtidsstatus."""
+    small = cv2.resize(gray_img, (0, 0), fx=0.5, fy=0.5, interpolation=cv2.INTER_NEAREST)
+    flags = cv2.CALIB_CB_FAST_CHECK + cv2.CALIB_CB_ADAPTIVE_THRESH
+    found, _ = cv2.findChessboardCorners(small, pattern_size, flags)
+    return bool(found)
+
+
 def find_corners(gray_img: np.ndarray, pattern_size: tuple):
-    """Söker efter inre schackrutshörn och förfinar med subpixelprecision."""
+    """Noggrann hörnsökning med subpixelprecision på full upplösning för kalibrering."""
     flags = (
         cv2.CALIB_CB_ADAPTIVE_THRESH
         + cv2.CALIB_CB_NORMALIZE_IMAGE
@@ -67,6 +97,10 @@ def main():
     print(f"Rutstorlek:   {SQUARE_SIZE_MM:.1f} mm")
     print(f"Mål:          {TARGET_PAIRS} bildpar")
     print(f"Resultatfil:  {OUTPUT_FILE}\n")
+    print("Instruktion:")
+    print(" 1. Håll iPaden stilla under kamerorna.")
+    print(" 2. Tryck ENTER när båda kamerorna visar [HITTAD] för att ta bilden.")
+    print(" 3. Skriv 'q' och tryck Enter (eller Ctrl+C) när du är klar.\n")
 
     IMAGE_SAVE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -81,58 +115,67 @@ def main():
             return
 
         rig.leds.all_off()
-        print("[OK] Redo! Håll upp iPaden under kamerorna i olika vinklar.\n")
+        print("[OK] Realtidsström aktiv! Rikta iPaden nu:\n")
 
         image_pairs = []
         pair_count = 0
 
         try:
             while pair_count < TARGET_PAIRS:
-                # Ta ambient-bildpar
+                # 1. Hämta bildruta direkt ur strömmen
                 pair = rig.capture_stereo(led_mode="ambient")
                 if not pair.is_valid():
-                    time.sleep(0.05)
+                    time.sleep(0.02)
                     continue
 
-                img_l = pair.left.image
-                img_r = pair.right.image
+                gray_l = cv2.cvtColor(pair.left.image, cv2.COLOR_BGR2GRAY)
+                gray_r = cv2.cvtColor(pair.right.image, cv2.COLOR_BGR2GRAY)
 
-                gray_l = cv2.cvtColor(img_l, cv2.COLOR_BGR2GRAY)
-                gray_r = cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY)
-
-                found_l, _ = find_corners(gray_l, pattern_size)
-                found_r, _ = find_corners(gray_r, pattern_size)
+                # Snabb hörnkontroll i realtid (<15ms)
+                found_l = check_corners_fast(gray_l, pattern_size)
+                found_r = check_corners_fast(gray_r, pattern_size)
 
                 status_l = "HITTAD" if found_l else "söker..."
                 status_r = "HITTAD" if found_r else "söker..."
-                ready_text = " [REDO! Tryck ENTER]" if (found_l and found_r) else ""
+                ready_text = " [REDO! TRYCK ENTER]" if (found_l and found_r) else ""
 
-                # Skriv status på samma rad i terminalen
                 sys.stdout.write(
-                    f"\rSparade par: {pair_count}/{TARGET_PAIRS}  |  "
+                    f"\rPar: {pair_count}/{TARGET_PAIRS}  |  "
                     f"CAM1 (V): {status_l:8s}  |  CAM0 (H): {status_r:8s}{ready_text}   "
                 )
                 sys.stdout.flush()
 
-                # När båda kamerorna ser mönstret, ge användaren möjlighet att spara
-                if found_l and found_r:
-                    print(f"\n[OK] Båda ser mönstret! Tryck ENTER för att spara (eller 'q' för att avsluta): ", end="")
-                    cmd = input().strip().lower()
-                    if cmd == "q":
-                        print("Avslutar insamlingen.")
-                        break
+                # 2. Kontrollera om användaren tryckte Enter eller q
+                key = check_key()
+                if key == "q":
+                    print("\nAvslutar insamlingen.")
+                    break
+                elif key == "enter":
+                    # Användaren tryckte Enter! Ta omedelbart en HELT FÄRSK bildruta
+                    # så att armen/rörelsen garanterat inte är med i bilden!
+                    fresh_pair = rig.capture_stereo(led_mode="ambient")
+                    if fresh_pair.is_valid():
+                        fresh_l = fresh_pair.left.image
+                        fresh_r = fresh_pair.right.image
+                        f_gray_l = cv2.cvtColor(fresh_l, cv2.COLOR_BGR2GRAY)
+                        f_gray_r = cv2.cvtColor(fresh_r, cv2.COLOR_BGR2GRAY)
 
-                    pair_count += 1
-                    # Spara bilderna till disk
-                    l_path = IMAGE_SAVE_DIR / f"pair_{pair_count:02d}_CAM1_left.jpg"
-                    r_path = IMAGE_SAVE_DIR / f"pair_{pair_count:02d}_CAM0_right.jpg"
-                    cv2.imwrite(str(l_path), img_l)
-                    cv2.imwrite(str(r_path), img_r)
+                        # Verifiera noggrant på full upplösning
+                        ok_l, corners_l = find_corners(f_gray_l, pattern_size)
+                        ok_r, corners_r = find_corners(f_gray_r, pattern_size)
 
-                    image_pairs.append((gray_l, gray_r))
-                    print(f"  -> Sparade par {pair_count} ({l_path.name})")
+                        if ok_l and ok_r:
+                            pair_count += 1
+                            l_path = IMAGE_SAVE_DIR / f"pair_{pair_count:02d}_CAM1_left.jpg"
+                            r_path = IMAGE_SAVE_DIR / f"pair_{pair_count:02d}_CAM0_right.jpg"
+                            cv2.imwrite(str(l_path), fresh_l)
+                            cv2.imwrite(str(r_path), fresh_r)
+                            image_pairs.append((f_gray_l, f_gray_r))
+                            print(f"\n  [OK] Sparade par {pair_count}/{TARGET_PAIRS}! ({l_path.name})")
+                        else:
+                            print("\n  [OBS] Mönstret sågs inte tydligt vid avtrycket. Håll stilla och tryck Enter igen.")
 
-                time.sleep(0.04)
+                time.sleep(0.02)
 
         except KeyboardInterrupt:
             print("\nAvbröt med Ctrl+C.")
