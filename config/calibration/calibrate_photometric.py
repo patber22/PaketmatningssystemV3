@@ -23,9 +23,10 @@ from typing import Dict, List, Optional, Tuple
 # 1. KONFIGURATION (Ändra vid behov)
 # ==============================================================================
 BALL_DIAMETER_MM: float = 40.0   # Standard bordtennisboll (40.0 mm)
-MIN_RADIUS_PX: int = 28          # Minsta radie i pixlar (~30-50 px vid 600-700 mm)
-MAX_RADIUS_PX: int = 55          # Största radie i pixlar
-ROI_RADIUS_PX: int = 400         # Sökradie kring mitten (ignorerar hörn och bordskanter)
+# Om du vill ange bollens position manuellt per kamera: (cx, cy, radie_px)
+# Sätt till None för automatisk detektering
+MANUAL_SPHERE_LEFT: Optional[Tuple[float, float, float]] = None   # t.ex. (820.0, 616.0, 38.0)
+MANUAL_SPHERE_RIGHT: Optional[Tuple[float, float, float]] = None  # t.ex. (820.0, 616.0, 38.0)
 NUM_SWEEPS: int = 1              # Antal svep att medelvärdesbilda över (standard: 1)
 
 # ==============================================================================
@@ -48,77 +49,71 @@ DEBUG_IMG_DIR = PROJECT_ROOT / "data" / "calibration" / "photometric"
 
 def find_sphere_circle(
     images_gray: List[np.ndarray],
-    min_radius: int = MIN_RADIUS_PX,
-    max_radius: int = MAX_RADIUS_PX,
-    roi_radius: int = ROI_RADIUS_PX,
+    camera_name: str,
+    manual_sphere: Optional[Tuple[float, float, float]] = None,
 ) -> Optional[Tuple[float, float, float]]:
     """
-    Hittar sfärens cirkel (cx, cy, radie) på medelvärdesbilden inom en centrum-ROI.
-    Ignorerar hörn, kanter och bakgrund utanför mätbäddens mittområde.
+    Hittar sfärens cirkel (cx, cy, radie) genom att analysera ljusvariation (diff).
+    På en platt bädd varierar ljuset mycket lite mellan lamporna (~10-15),
+    medan en 3D-sfär skuggas starkt på motsatt sida och har en kraftig ljusvariation (>80).
     """
-    avg_gray = np.mean(images_gray, axis=0).astype(np.uint8)
-    h, w = avg_gray.shape
-    cx_nom, cy_nom = w // 2, h // 2
+    if manual_sphere is not None:
+        print(f"  -> {camera_name}: Använder manuellt angiven sfär: {manual_sphere}")
+        return manual_sphere
 
-    # Maskera ut centrum-ROI (ignorerar allt utanför mitten av bädden)
-    y_coords, x_coords = np.ogrid[:h, :w]
-    roi_mask = ((x_coords - cx_nom) ** 2 + (y_coords - cy_nom) ** 2) <= (roi_radius ** 2)
+    imgs_f = [im.astype(np.float32) for im in images_gray]
+    diff = np.max(imgs_f, axis=0) - np.min(imgs_f, axis=0)
 
-    roi_img = np.zeros_like(avg_gray)
-    roi_img[roi_mask] = avg_gray[roi_mask]
-    blur = cv2.GaussianBlur(roi_img, (9, 9), 2)
+    # Släta ut bruset från OSB-träflisor
+    diff_blur = cv2.GaussianBlur(diff, (21, 21), 5)
 
-    # Metod 1: HoughCircles i centrum-ROI
-    circles = cv2.HoughCircles(
-        blur,
-        cv2.HOUGH_GRADIENT,
-        dp=1.2,
-        minDist=60,
-        param1=50,
-        param2=24,
-        minRadius=min_radius,
-        maxRadius=max_radius,
-    )
-    if circles is not None and len(circles[0]) > 0:
-        # Välj cirkeln närmast bildens mittpunkt
-        best_circle = None
-        min_dist = float("inf")
-        for c in circles[0]:
-            cx, cy, r = float(c[0]), float(c[1]), float(c[2])
-            dist = np.hypot(cx - cx_nom, cy - cy_nom)
-            if dist < min_dist:
-                min_dist = dist
-                best_circle = (cx, cy, r)
-        if best_circle is not None:
-            return best_circle
+    # Maskera bort de yttersta 40 pixlarna vid bildkanten
+    margin = 40
+    diff_blur[:margin, :] = 0
+    diff_blur[-margin:, :] = 0
+    diff_blur[:, :margin] = 0
+    diff_blur[:, -margin:] = 0
 
-    # Metod 2 (Fallback): Tröskla ut ljusaste området i ROI och sök rundaste kontur
-    roi_pixels = roi_img[roi_mask]
-    if len(roi_pixels) == 0:
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(diff_blur)
+    peak_x, peak_y = max_loc
+
+    # Diagnostikbild för ljusvariation
+    diff_vis = cv2.normalize(diff_blur, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    diff_vis_bgr = cv2.cvtColor(diff_vis, cv2.COLOR_GRAY2BGR)
+    cv2.circle(diff_vis_bgr, (peak_x, peak_y), 6, (0, 0, 255), -1)
+
+    if max_val < 35.0:
+        print(f"  [VARNING] Maximal ljusvariation i {camera_name} var endast {max_val:.1f} (förväntat > 60 för en 3D-sfär).")
+        cv2.imwrite(str(DEBUG_IMG_DIR / f"debug_failed_{camera_name}.jpg"), diff_vis_bgr)
         return None
-    thresh_val = max(140, int(np.percentile(roi_pixels, 92)))
-    _, thresh = cv2.threshold(roi_img, thresh_val, 255, cv2.THRESH_BINARY)
 
-    cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Tröskla ut området med hög variation kring toppen
+    thresh_val = max(35.0, max_val * 0.35)
+    _, thresh = cv2.threshold(diff_blur, thresh_val, 255, cv2.THRESH_BINARY)
+    cnts, _ = cv2.findContours(thresh.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     best_circle = None
-    best_score = 0.0
-
-    for c in cnts:
-        area = cv2.contourArea(c)
-        if area < np.pi * (min_radius ** 2):
-            continue
-        perimeter = cv2.arcLength(c, True)
-        if perimeter == 0:
-            continue
-        circularity = 4 * np.pi * (area / (perimeter * perimeter))
-        (cx, cy), radius = cv2.minEnclosingCircle(c)
-        dist_to_center = np.hypot(cx - cx_nom, cy - cy_nom)
-
-        if min_radius <= radius <= max_radius and circularity > 0.60 and dist_to_center <= roi_radius:
-            score = circularity * (1.0 - (dist_to_center / roi_radius) * 0.5)
-            if score > best_score:
-                best_score = score
+    for c in sorted(cnts, key=cv2.contourArea, reverse=True):
+        if cv2.pointPolygonTest(c, (float(peak_x), float(peak_y)), True) >= -15:
+            (cx, cy), radius = cv2.minEnclosingCircle(c)
+            if 15.0 <= radius <= 70.0:
                 best_circle = (float(cx), float(cy), float(radius))
+                break
+
+    # Om ingen kontur omslöt toppen direkt, välj närmaste rimliga kontur
+    if best_circle is None and cnts:
+        for c in sorted(cnts, key=cv2.contourArea, reverse=True):
+            (cx, cy), radius = cv2.minEnclosingCircle(c)
+            dist_to_peak = np.hypot(cx - peak_x, cy - peak_y)
+            if dist_to_peak < 60 and 15.0 <= radius <= 70.0:
+                best_circle = (float(cx), float(cy), float(radius))
+                break
+
+    if best_circle is not None:
+        cv2.circle(diff_vis_bgr, (int(best_circle[0]), int(best_circle[1])), int(best_circle[2]), (0, 255, 0), 2)
+        cv2.imwrite(str(DEBUG_IMG_DIR / f"debug_diff_{camera_name}.jpg"), diff_vis_bgr)
+    else:
+        cv2.imwrite(str(DEBUG_IMG_DIR / f"debug_failed_{camera_name}.jpg"), diff_vis_bgr)
 
     return best_circle
 
@@ -229,22 +224,32 @@ def main():
 
     print("\n[3/4] Detekterar pingisbollen och beräknar ljusvektorer för båda kamerorna...")
     DEBUG_IMG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1. Spara alla 8 råbilder direkt för garanterad felsökning
+    for cam_name, bgr_list in cams.items():
+        for ch_idx, bgr in enumerate(bgr_list):
+            cv2.imwrite(str(DEBUG_IMG_DIR / f"raw_{cam_name}_ch{ch_idx + 1}.jpg"), bgr)
+
     calib_results = {
         "calibrated_at": datetime.now().isoformat(),
         "ball_diameter_mm": BALL_DIAMETER_MM,
         "cameras": {},
     }
 
+    manual_spheres = {
+        "left_cam1": MANUAL_SPHERE_LEFT,
+        "right_cam0": MANUAL_SPHERE_RIGHT,
+    }
+
     for cam_name, bgr_list in cams.items():
         grays = [cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) for im in bgr_list]
-
-        # Medelvärdesbild för kontrast och cirkeldetektion (utan övermättning)
         avg_gray = np.mean(grays, axis=0).astype(np.uint8)
 
-        circle = find_sphere_circle(grays)
+        circle = find_sphere_circle(grays, cam_name, manual_spheres.get(cam_name))
         if circle is None:
-            print(f"  [FEL] Kunde inte hitta pingisbollen i {cam_name} inom centrum-ROI!")
-            print("        Kontrollera att bollen ligger i mitten av bädden och syns tydligt.")
+            print(f"  [FEL] Kunde inte hitta pingisbollen i {cam_name}!")
+            print(f"        Se felsökningsbild i {DEBUG_IMG_DIR / f'debug_failed_{cam_name}.jpg'}.")
+            print(f"        Tips: Du kan ange positionen manuellt i toppen av filen via MANUAL_SPHERE_{'LEFT' if 'left' in cam_name else 'RIGHT'}.")
             return
 
         cx, cy, radius = circle
@@ -254,15 +259,9 @@ def main():
         cam_calib = compute_light_vectors_for_camera(grays, cx, cy, radius, cam_name)
         calib_results["cameras"][cam_name] = cam_calib
 
-        # Spara råbilder för varje belysningskanal för enkel inspektion
-        for ch_idx, bgr in enumerate(bgr_list):
-            cv2.imwrite(str(DEBUG_IMG_DIR / f"raw_{cam_name}_ch{ch_idx + 1}.jpg"), bgr)
-
-        # Skapa en debug-bild som visar sök-ROI, bollen och de 4 belysningspunkterna
+        # Skapa en debug-bild som visar bollen och de 4 belysningspunkterna
         debug_vis = cv2.cvtColor(avg_gray, cv2.COLOR_GRAY2BGR)
-        h, w = avg_gray.shape
-        cv2.circle(debug_vis, (w // 2, h // 2), ROI_RADIUS_PX, (80, 80, 80), 1)  # ROI-gräns
-        cv2.circle(debug_vis, (int(cx), int(cy)), int(radius), (0, 255, 0), 2)   # Detekterad sfär
+        cv2.circle(debug_vis, (int(cx), int(cy)), int(radius), (0, 255, 0), 2)
         colors = [(0, 0, 255), (0, 255, 255), (255, 0, 0), (255, 0, 255)]
         for ch_idx, pt in enumerate(cam_calib["highlight_points"]):
             cv2.circle(debug_vis, (int(pt[0]), int(pt[1])), 4, colors[ch_idx], -1)
