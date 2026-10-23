@@ -119,7 +119,7 @@ class Camera:
 
         self.is_connected = False
 
-    def set_exposure(self, exposure_us: int, gain: float, flush_frames: int = 2) -> bool:
+    def set_exposure(self, exposure_us: int, gain: float, flush_frames: int = 3) -> bool:
         """
         Uppdaterar slutartid och förstärkning på en aktiv kameraström.
         Om värdena redan stämmer görs ingenting.
