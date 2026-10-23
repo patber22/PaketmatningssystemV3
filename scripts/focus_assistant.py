@@ -49,28 +49,39 @@ def make_bar(value: float, max_val: float = 300.0, bar_len: int = 15) -> str:
 
 
 def main():
+    use_ir = "--ir" in sys.argv
+
     print("=" * 70)
     print("  FOKUSASSISTENT: NoIR-kameror (CAM0 & CAM1)")
     print("=" * 70)
     print("Tips för bästa resultat:")
     print(" 1. Lägg ett papper med skarp text, streckkod eller schackmönster")
     print("    på mätbädden rakt under båda kamerorna.")
-    print(" 2. Tänder 850nm IR-belysningen så att linsen fokuseras för IR-ljus.")
+    if use_ir:
+        print(" 2. IR-belysning AKTIVERAD (--ir angivet).")
+    else:
+        print(" 2. IR-lamporna hålls SLÄCKTA för att förhindra värmeutveckling.")
+        print("    Kamerorna anpassas för vanligt rumsljus (40ms, gain 6.0).")
     print(" 3. Vrid försiktigt på linsringen på den kamera du justerar.")
     print("    När värdet når sitt absoluta max (Peak) är linsen i perfekt fokus.")
     print(" 4. Avsluta med Ctrl+C när du är nöjd.\n")
 
-    print("Ansluter till kameror och belysning...")
+    print("Ansluter till kameror...")
     with VisionRig(verbose=False) as rig:
         if not rig.is_connected:
-            print("[FEL] Kunde inte ansluta till VisionRig (kameror eller LED).")
+            print("[FEL] Kunde inte ansluta till VisionRig.")
             return
 
-        # Sätt en stabil exponering för fokusering och tänd belysningen
-        rig.set_exposure(exposure_us=25000, gain=3.0)
-        rig.leds.all_on()
+        if use_ir:
+            rig.set_exposure(exposure_us=25000, gain=3.0)
+            rig.leds.all_on()
+            print("[OK] IR-belysning tänd.")
+        else:
+            rig.leds.all_off()
+            rig.set_exposure(exposure_us=40000, gain=6.0)
+            print("[OK] IR-lampor släckta (kör i rumsljus).")
 
-        print("[OK] IR-belysning tänd. Mätning aktiv! Vrid på linserna nu:\n")
+        print("Mätning aktiv! Vrid på linserna nu:\n")
 
         peak_0 = 0.0
         peak_1 = 0.0
