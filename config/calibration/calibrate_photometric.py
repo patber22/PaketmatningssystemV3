@@ -5,11 +5,11 @@ Beräknar ljusriktningsvektorer (L1..L4) och relativa lampstyrkor (s1..s4)
 för båda kamerorna (CAM1 Vänster och CAM0 Höger) med hjälp av en vit pingisboll.
 Resultatet sparas till config/calibration/data/photometric.json.
 
-Instruktioner:
-1. Placera en vit, matt pingisboll (40 mm) mitt på mätbädden.
-2. Kör skriptet på Raspberry Pi:
-    python3 config/calibration/calibrate_photometric.py
-3. Skriptet kör ett fotometriskt svep, lokaliserar bollen och beräknar vektorerna.
+Arkitektur:
+1. Tar en stereobild med alla 4 lampor tända samtidigt (led_mode="all").
+   Bollen belyses jämnt utan vandrande skuggor och identifieras som en perfekt cirkel.
+2. Tar ett fotometriskt svep (Kanal 1 -> 2 -> 3 -> 4).
+   Använder den funna sfärens geometri för att räkna ut lampornas 3D-vektorer och intensiteter.
 """
 
 import json
@@ -23,11 +23,11 @@ from typing import Dict, List, Optional, Tuple
 # 1. KONFIGURATION (Ändra vid behov)
 # ==============================================================================
 BALL_DIAMETER_MM: float = 40.0   # Standard bordtennisboll (40.0 mm)
+
 # Om du vill ange bollens position manuellt per kamera: (cx, cy, radie_px)
-# Sätt till None för automatisk detektering
+# Sätt till None för automatisk detektering i den jämnt belysta bilden
 MANUAL_SPHERE_LEFT: Optional[Tuple[float, float, float]] = None   # t.ex. (820.0, 616.0, 38.0)
 MANUAL_SPHERE_RIGHT: Optional[Tuple[float, float, float]] = None  # t.ex. (820.0, 616.0, 38.0)
-NUM_SWEEPS: int = 1              # Antal svep att medelvärdesbilda över (standard: 1)
 
 # ==============================================================================
 # SÖKVÄGAR OCH IMPORTER
@@ -48,74 +48,91 @@ DEBUG_IMG_DIR = PROJECT_ROOT / "data" / "calibration" / "photometric"
 
 
 def find_sphere_circle(
-    images_gray: List[np.ndarray],
+    all_bgr: np.ndarray,
     camera_name: str,
     manual_sphere: Optional[Tuple[float, float, float]] = None,
 ) -> Optional[Tuple[float, float, float]]:
     """
-    Hittar sfärens cirkel (cx, cy, radie) genom att analysera ljusvariation (diff).
-    På en platt bädd varierar ljuset mycket lite mellan lamporna (~10-15),
-    medan en 3D-sfär skuggas starkt på motsatt sida och har en kraftig ljusvariation (>80).
+    Hittar sfärens cirkel (cx, cy, radie) i bilden där alla 4 lampor lyser samtidigt.
+    I denna bild är bollen jämnt upplyst från alla håll utan vandrande skuggor
+    och framträder som en ljus, cirkulär skiva.
     """
     if manual_sphere is not None:
         print(f"  -> {camera_name}: Använder manuellt angiven sfär: {manual_sphere}")
         return manual_sphere
 
-    imgs_f = [im.astype(np.float32) for im in images_gray]
-    diff = np.max(imgs_f, axis=0) - np.min(imgs_f, axis=0)
-
-    # Släta ut bruset från OSB-träflisor
-    diff_blur = cv2.GaussianBlur(diff, (21, 21), 5)
-
-    # Maskera bort de yttersta 40 pixlarna vid bildkanten
+    gray = cv2.cvtColor(all_bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    cx_nom, cy_nom = w // 2, h // 2
     margin = 40
-    diff_blur[:margin, :] = 0
-    diff_blur[-margin:, :] = 0
-    diff_blur[:, :margin] = 0
-    diff_blur[:, -margin:] = 0
 
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(diff_blur)
-    peak_x, peak_y = max_loc
+    blur = cv2.GaussianBlur(gray, (9, 9), 2)
+    y_coords, x_coords = np.ogrid[:h, :w]
 
-    # Diagnostikbild för ljusvariation
-    diff_vis = cv2.normalize(diff_blur, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    diff_vis_bgr = cv2.cvtColor(diff_vis, cv2.COLOR_GRAY2BGR)
-    cv2.circle(diff_vis_bgr, (peak_x, peak_y), 6, (0, 0, 255), -1)
+    # Metod 1: HoughCircles på den jämnt belysta bilden
+    circles = cv2.HoughCircles(
+        blur,
+        cv2.HOUGH_GRADIENT,
+        dp=1.0,
+        minDist=45,
+        param1=50,
+        param2=18,
+        minRadius=24,
+        maxRadius=60,
+    )
 
-    if max_val < 35.0:
-        print(f"  [VARNING] Maximal ljusvariation i {camera_name} var endast {max_val:.1f} (förväntat > 60 för en 3D-sfär).")
-        cv2.imwrite(str(DEBUG_IMG_DIR / f"debug_failed_{camera_name}.jpg"), diff_vis_bgr)
-        return None
+    best_candidate = None
+    best_score = -1e9
 
-    # Tröskla ut området med hög variation kring toppen
-    thresh_val = max(35.0, max_val * 0.35)
-    _, thresh = cv2.threshold(diff_blur, thresh_val, 255, cv2.THRESH_BINARY)
-    cnts, _ = cv2.findContours(thresh.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if circles is not None and len(circles[0]) > 0:
+        for c in circles[0]:
+            cx, cy, r = float(c[0]), float(c[1]), float(c[2])
+            if not (margin <= cx <= w - margin and margin <= cy <= h - margin):
+                continue
 
-    best_circle = None
-    for c in sorted(cnts, key=cv2.contourArea, reverse=True):
-        if cv2.pointPolygonTest(c, (float(peak_x), float(peak_y)), True) >= -15:
+            # Mät genomsnittlig ljusstyrka inuti cirkeln
+            inner_mask = ((x_coords - cx) ** 2 + (y_coords - cy) ** 2) <= (r * 0.8) ** 2
+            mean_intensity = float(np.mean(gray[inner_mask])) if np.any(inner_mask) else 0.0
+            dist_to_center = np.hypot(cx - cx_nom, cy - cy_nom)
+
+            # Poängsätt: hög ljusstyrka + närhet till bildens mitt
+            score = mean_intensity * 1.5 - (dist_to_center * 0.25)
+            if score > best_score:
+                best_score = score
+                best_candidate = (cx, cy, r)
+
+        if best_candidate is not None and best_candidate[2] >= 24.0:
+            return best_candidate
+
+    # Metod 2 (Fallback): Ljushetströskling och rundhetsanalys
+    for percentile in [95, 90, 85]:
+        thresh_val = int(np.percentile(blur[margin:-margin, margin:-margin], percentile))
+        _, thresh = cv2.threshold(blur, thresh_val, 255, cv2.THRESH_BINARY)
+        thresh[:margin, :] = 0; thresh[-margin:, :] = 0
+        thresh[:, :margin] = 0; thresh[:, -margin:] = 0
+
+        cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if area < np.pi * (20 ** 2):
+                continue
+            perimeter = cv2.arcLength(c, True)
+            if perimeter == 0:
+                continue
+            circ = 4 * np.pi * (area / (perimeter * perimeter))
             (cx, cy), radius = cv2.minEnclosingCircle(c)
-            if 15.0 <= radius <= 70.0:
-                best_circle = (float(cx), float(cy), float(radius))
-                break
+            dist_to_center = np.hypot(cx - cx_nom, cy - cy_nom)
 
-    # Om ingen kontur omslöt toppen direkt, välj närmaste rimliga kontur
-    if best_circle is None and cnts:
-        for c in sorted(cnts, key=cv2.contourArea, reverse=True):
-            (cx, cy), radius = cv2.minEnclosingCircle(c)
-            dist_to_peak = np.hypot(cx - peak_x, cy - peak_y)
-            if dist_to_peak < 60 and 15.0 <= radius <= 70.0:
-                best_circle = (float(cx), float(cy), float(radius))
-                break
+            if 22.0 <= radius <= 60.0 and circ > 0.60:
+                score = circ * 200.0 - (dist_to_center * 0.2)
+                if score > best_score:
+                    best_score = score
+                    best_candidate = (float(cx), float(cy), float(radius))
 
-    if best_circle is not None:
-        cv2.circle(diff_vis_bgr, (int(best_circle[0]), int(best_circle[1])), int(best_circle[2]), (0, 255, 0), 2)
-        cv2.imwrite(str(DEBUG_IMG_DIR / f"debug_diff_{camera_name}.jpg"), diff_vis_bgr)
-    else:
-        cv2.imwrite(str(DEBUG_IMG_DIR / f"debug_failed_{camera_name}.jpg"), diff_vis_bgr)
+        if best_candidate is not None:
+            return best_candidate
 
-    return best_circle
+    return None
 
 
 def compute_light_vectors_for_camera(
@@ -127,7 +144,7 @@ def compute_light_vectors_for_camera(
 ) -> Dict:
     """
     Beräknar de 4 ljusriktningsvektorerna (L1..L4) och relativa styrkor (s1..s4)
-    för en kamera baserat på sfärens ytreflektioner.
+    för en kamera baserat på sfärens ytreflektioner i de 4 svepbilderna.
     """
     h, w = images_gray[0].shape
     y_coords, x_coords = np.ogrid[:h, :w]
@@ -204,32 +221,44 @@ def main():
             print("[FEL] Kunde inte ansluta till hårdvaran i VisionRig.")
             return
 
-        print("[OK] Hårdvara redo. Se till att pingisbollen ligger på mätbädden.")
-        print("     Tryck ENTER för att köra ljussvepet: ", end="")
+        print("[OK] Hårdvara redo. Placera pingisbollen mitt på mätbädden.")
+        print("     Tryck ENTER för att starta kalibreringen: ", end="")
         input()
 
-        # [2/4] Samla in fotometriskt ljussvep
-        print("\n[2/4] Tar fotometriskt svep (Kanal 1 -> 2 -> 3 -> 4)...")
+        # [2/4] Bild med alla lampor tända för symmetrisk sfärdetektering
+        print("\n[2/4] Tar bild med ALLA lampor tända (jämn sfärbelysning)...")
+        all_pair = rig.capture_stereo_pair(led_mode="all")
+        if not all_pair.is_valid():
+            print("[FEL] Kunde inte ta bild med alla lampor tända.")
+            return
+
+        # [3/4] Fotometriskt svep (Kanal 1 -> 2 -> 3 -> 4)
+        print("[3/4] Tar fotometriskt svep (Kanal 1 -> 2 -> 3 -> 4)...")
         sweep = rig.capture_photometric_sweep()
         if not sweep.is_valid():
             print("[FEL] Fotometriska svepet misslyckades eller saknar kanaler.")
             return
 
-    # Separera de 4 bilderna per kamera
-    # CAM1 = Vänster, CAM0 = Höger
-    cams = {
+    # Organisera bilderna per kamera
+    cams_all = {
+        "left_cam1": all_pair.left.image,
+        "right_cam0": all_pair.right.image,
+    }
+    cams_sweep = {
         "left_cam1": [sweep.get_channel(ch).left.image for ch in [1, 2, 3, 4]],
         "right_cam0": [sweep.get_channel(ch).right.image for ch in [1, 2, 3, 4]],
     }
 
-    print("\n[3/4] Detekterar pingisbollen och beräknar ljusvektorer för båda kamerorna...")
     DEBUG_IMG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1. Spara alla 8 råbilder direkt för garanterad felsökning
-    for cam_name, bgr_list in cams.items():
+    # 1. Spara alla råbilder omedelbart för full insyn
+    for cam_name, img_all in cams_all.items():
+        cv2.imwrite(str(DEBUG_IMG_DIR / f"raw_all_{cam_name}.jpg"), img_all)
+    for cam_name, bgr_list in cams_sweep.items():
         for ch_idx, bgr in enumerate(bgr_list):
-            cv2.imwrite(str(DEBUG_IMG_DIR / f"raw_{cam_name}_ch{ch_idx + 1}.jpg"), bgr)
+            cv2.imwrite(str(DEBUG_IMG_DIR / f"raw_sweep_{cam_name}_ch{ch_idx + 1}.jpg"), bgr)
 
+    print("\n[4/4] Beräknar ljusvektorer för båda kamerorna...")
     calib_results = {
         "calibrated_at": datetime.now().isoformat(),
         "ball_diameter_mm": BALL_DIAMETER_MM,
@@ -241,26 +270,27 @@ def main():
         "right_cam0": MANUAL_SPHERE_RIGHT,
     }
 
-    for cam_name, bgr_list in cams.items():
-        grays = [cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) for im in bgr_list]
-        avg_gray = np.mean(grays, axis=0).astype(np.uint8)
+    for cam_name in ["left_cam1", "right_cam0"]:
+        img_all = cams_all[cam_name]
+        bgr_sweep = cams_sweep[cam_name]
+        grays_sweep = [cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) for im in bgr_sweep]
 
-        circle = find_sphere_circle(grays, cam_name, manual_spheres.get(cam_name))
+        circle = find_sphere_circle(img_all, cam_name, manual_spheres.get(cam_name))
         if circle is None:
             print(f"  [FEL] Kunde inte hitta pingisbollen i {cam_name}!")
-            print(f"        Se felsökningsbild i {DEBUG_IMG_DIR / f'debug_failed_{cam_name}.jpg'}.")
-            print(f"        Tips: Du kan ange positionen manuellt i toppen av filen via MANUAL_SPHERE_{'LEFT' if 'left' in cam_name else 'RIGHT'}.")
+            print(f"        Kontrollera {DEBUG_IMG_DIR / f'raw_all_{cam_name}.jpg'}.")
+            print(f"        Tips: Du kan ange position manuellt via MANUAL_SPHERE_{'LEFT' if 'left' in cam_name else 'RIGHT'} i filens topp.")
             return
 
         cx, cy, radius = circle
-        print(f"  -> {cam_name}: Bollen hittad på centrum ({cx:.1f}, {cy:.1f}), radie={radius:.1f} px")
+        print(f"  -> {cam_name}: Sfär hittad på centrum ({cx:.1f}, {cy:.1f}), radie={radius:.1f} px")
 
-        # Beräkna ljusvektorerna
-        cam_calib = compute_light_vectors_for_camera(grays, cx, cy, radius, cam_name)
+        # Beräkna ljusvektorerna baserat på svepbilderna
+        cam_calib = compute_light_vectors_for_camera(grays_sweep, cx, cy, radius, cam_name)
         calib_results["cameras"][cam_name] = cam_calib
 
-        # Skapa en debug-bild som visar bollen och de 4 belysningspunkterna
-        debug_vis = cv2.cvtColor(avg_gray, cv2.COLOR_GRAY2BGR)
+        # Skapa en tydlig debug-bild på 'all_lit'-bilden med sfärcirkel och de 4 lampvektorerna
+        debug_vis = img_all.copy()
         cv2.circle(debug_vis, (int(cx), int(cy)), int(radius), (0, 255, 0), 2)
         colors = [(0, 0, 255), (0, 255, 255), (255, 0, 0), (255, 0, 255)]
         for ch_idx, pt in enumerate(cam_calib["highlight_points"]):
@@ -278,7 +308,7 @@ def main():
         dbg_path = DEBUG_IMG_DIR / f"debug_{cam_name}.jpg"
         cv2.imwrite(str(dbg_path), debug_vis)
 
-    # [4/4] Spara till JSON
+    # Spara resultatet till JSON
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(calib_results, f, indent=2)
