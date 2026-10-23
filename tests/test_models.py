@@ -9,7 +9,15 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from src.core.models import ToFReading, BarcodeReading, CameraFrame, CameraFramePair, WeightReading
+from src.core.models import (
+    ToFReading,
+    BarcodeReading,
+    CameraFrame,
+    CameraFramePair,
+    WeightReading,
+    PhotometricSweep,
+    VisionCapture,
+)
 import numpy as np
 import cv2
 
@@ -438,6 +446,193 @@ class TestWeightReading(unittest.TestCase):
         """Verifiera att __str__ returnerar en läsbar sträng."""
         w = WeightReading.invalid()
         self.assertIn("WeightReading", str(w))
+
+
+class TestPhotometricSweep(unittest.TestCase):
+    """Testsvit för PhotometricSweep dataklassen."""
+
+    def _create_valid_pair(self, ts=1000.0) -> CameraFramePair:
+        img = np.full((10, 10, 3), 128, dtype=np.uint8)
+        f_left = CameraFrame(image=img, camera_id="CAM1", timestamp=ts, _is_valid=True)
+        f_right = CameraFrame(image=img, camera_id="CAM0", timestamp=ts, _is_valid=True)
+        return CameraFramePair(left=f_left, right=f_right, timestamp=ts)
+
+    def test_default_values(self):
+        """Verifiera att standardvärden är ogiltiga."""
+        sweep = PhotometricSweep()
+        self.assertFalse(sweep.is_valid())
+        self.assertEqual(sweep.timestamp, 0.0)
+        self.assertFalse(sweep.ch1.is_valid())
+        self.assertFalse(sweep.ch4.is_valid())
+
+    def test_invalid_factory(self):
+        """Verifiera att invalid() fabriksmetoden returnerar ogiltigt svep."""
+        inv = PhotometricSweep.invalid()
+        self.assertFalse(inv.is_valid())
+        self.assertGreater(inv.timestamp, 0.0)
+
+    def test_valid_sweep(self):
+        """Verifiera att is_valid() returnerar True endast om ALLA 4 kanaler är giltiga."""
+        pair1 = self._create_valid_pair()
+        pair2 = self._create_valid_pair()
+        pair3 = self._create_valid_pair()
+        pair4 = self._create_valid_pair()
+
+        # Alla 4 giltiga -> True
+        sweep = PhotometricSweep(ch1=pair1, ch2=pair2, ch3=pair3, ch4=pair4, timestamp=1000.0)
+        self.assertTrue(sweep.is_valid())
+
+        # En kanal ogiltig -> False
+        sweep_incomplete = PhotometricSweep(ch1=pair1, ch2=pair2, ch3=pair3, ch4=CameraFramePair.invalid())
+        self.assertFalse(sweep_incomplete.is_valid())
+
+    def test_get_channel(self):
+        """Verifiera åtkomst till kanaler via get_channel()."""
+        pair1 = self._create_valid_pair(1.0)
+        pair2 = self._create_valid_pair(2.0)
+        pair3 = self._create_valid_pair(3.0)
+        pair4 = self._create_valid_pair(4.0)
+        sweep = PhotometricSweep(ch1=pair1, ch2=pair2, ch3=pair3, ch4=pair4)
+
+        self.assertEqual(sweep.get_channel(1).timestamp, 1.0)
+        self.assertEqual(sweep.get_channel(2).timestamp, 2.0)
+        self.assertEqual(sweep.get_channel(3).timestamp, 3.0)
+        self.assertEqual(sweep.get_channel(4).timestamp, 4.0)
+
+        with self.assertRaises(ValueError):
+            sweep.get_channel(5)
+
+    def test_to_dict_and_from_dict(self):
+        """Verifiera serialisering av metadata utan bildmatriser."""
+        pair1 = self._create_valid_pair()
+        pair2 = self._create_valid_pair()
+        pair3 = self._create_valid_pair()
+        pair4 = self._create_valid_pair()
+        original = PhotometricSweep(ch1=pair1, ch2=pair2, ch3=pair3, ch4=pair4, timestamp=1700000000.0)
+
+        data = original.to_dict()
+        self.assertTrue(data["is_valid"])
+        self.assertEqual(data["timestamp"], 1700000000.0)
+        self.assertIn("ch1", data)
+        self.assertIn("ch4", data)
+
+        restored = PhotometricSweep.from_dict(data)
+        self.assertFalse(restored.is_valid())  # Inga råa bildmatriser följer med i metadata-dict
+        self.assertEqual(restored.timestamp, 1700000000.0)
+
+    def test_to_jpeg(self):
+        """Verifiera att to_jpeg sparar alla 4 kanalers bildpar till disk."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            pair1 = self._create_valid_pair(100.0)
+            pair2 = self._create_valid_pair(200.0)
+            pair3 = self._create_valid_pair(300.0)
+            pair4 = self._create_valid_pair(400.0)
+            sweep = PhotometricSweep(ch1=pair1, ch2=pair2, ch3=pair3, ch4=pair4)
+
+            saved = sweep.to_jpeg(path=tmp_path)
+            self.assertEqual(len(saved), 4)
+            for ch in [1, 2, 3, 4]:
+                left_p, right_p = saved[ch]
+                self.assertIsNotNone(left_p)
+                self.assertIsNotNone(right_p)
+                self.assertTrue(left_p.exists())
+                self.assertTrue(right_p.exists())
+
+    def test_str_representation(self):
+        """Verifiera __str__ representation."""
+        sweep = PhotometricSweep.invalid()
+        self.assertIn("PhotometricSweep", str(sweep))
+
+
+class TestVisionCapture(unittest.TestCase):
+    """Testsvit för VisionCapture dataklassen."""
+
+    def _create_valid_pair(self, ts=1000.0) -> CameraFramePair:
+        img = np.full((10, 10, 3), 128, dtype=np.uint8)
+        f_left = CameraFrame(image=img, camera_id="CAM1", timestamp=ts, _is_valid=True)
+        f_right = CameraFrame(image=img, camera_id="CAM0", timestamp=ts, _is_valid=True)
+        return CameraFramePair(left=f_left, right=f_right, timestamp=ts)
+
+    def test_default_values(self):
+        """Verifiera att standardvärden är ogiltiga."""
+        cap = VisionCapture()
+        self.assertFalse(cap.is_valid())
+        self.assertEqual(cap.timestamp, 0.0)
+
+    def test_invalid_factory(self):
+        """Verifiera att invalid() fabriksmetoden returnerar ogiltigt objekt."""
+        inv = VisionCapture.invalid()
+        self.assertFalse(inv.is_valid())
+        self.assertGreater(inv.timestamp, 0.0)
+
+    def test_valid_capture(self):
+        """Verifiera att is_valid() kräver både giltigt stereopar och fotometriskt svep."""
+        stereo = self._create_valid_pair(100.0)
+        p1 = self._create_valid_pair(101.0)
+        p2 = self._create_valid_pair(102.0)
+        p3 = self._create_valid_pair(103.0)
+        p4 = self._create_valid_pair(104.0)
+        photo = PhotometricSweep(ch1=p1, ch2=p2, ch3=p3, ch4=p4, timestamp=105.0)
+
+        # Båda giltiga -> True
+        cap = VisionCapture(stereo=stereo, photometric=photo, timestamp=100.0)
+        self.assertTrue(cap.is_valid())
+
+        # Stereopar ogiltigt -> False
+        cap_bad_stereo = VisionCapture(stereo=CameraFramePair.invalid(), photometric=photo)
+        self.assertFalse(cap_bad_stereo.is_valid())
+
+        # Svep ogiltigt -> False
+        cap_bad_photo = VisionCapture(stereo=stereo, photometric=PhotometricSweep.invalid())
+        self.assertFalse(cap_bad_photo.is_valid())
+
+    def test_to_dict_and_from_dict(self):
+        """Verifiera serialisering av VisionCapture metadata."""
+        stereo = self._create_valid_pair(100.0)
+        photo = PhotometricSweep(
+            ch1=self._create_valid_pair(101.0),
+            ch2=self._create_valid_pair(102.0),
+            ch3=self._create_valid_pair(103.0),
+            ch4=self._create_valid_pair(104.0),
+            timestamp=105.0,
+        )
+        original = VisionCapture(stereo=stereo, photometric=photo, timestamp=1700000000.0)
+
+        data = original.to_dict()
+        self.assertTrue(data["is_valid"])
+        self.assertEqual(data["timestamp"], 1700000000.0)
+        self.assertIn("stereo", data)
+        self.assertIn("photometric", data)
+
+        restored = VisionCapture.from_dict(data)
+        self.assertEqual(restored.timestamp, 1700000000.0)
+
+    def test_to_jpeg(self):
+        """Verifiera att to_jpeg sparar både stereo och fotometriska bilder."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            stereo = self._create_valid_pair(100.0)
+            photo = PhotometricSweep(
+                ch1=self._create_valid_pair(101.0),
+                ch2=self._create_valid_pair(102.0),
+                ch3=self._create_valid_pair(103.0),
+                ch4=self._create_valid_pair(104.0),
+                timestamp=105.0,
+            )
+            cap = VisionCapture(stereo=stereo, photometric=photo, timestamp=100.0)
+
+            saved = cap.to_jpeg(path=tmp_path)
+            self.assertIn("stereo", saved)
+            self.assertIn("photometric", saved)
+            left_s, right_s = saved["stereo"]
+            self.assertTrue(left_s.exists())
+            self.assertTrue(right_s.exists())
+
+    def test_str_representation(self):
+        """Verifiera __str__ representation."""
+        cap = VisionCapture.invalid()
+        self.assertIn("VisionCapture", str(cap))
 
 
 
