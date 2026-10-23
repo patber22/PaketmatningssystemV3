@@ -74,8 +74,13 @@ class Camera:
             self._picam2 = Picamera2(camera_num=self.port)
 
             # Konfigurera kontinuerlig videoström i RAM (RGB888)
+            # queue=False och buffer_count=2 garanterar att Picamera2 inte buffrar
+            # gamla bildrutor i en FIFO-kö utan alltid levererar den senast exponerade
+            # bildrutan direkt från sensorn (kritiskt vid snabb LED-växling).
             config = self._picam2.create_video_configuration(
-                main={"size": self.resolution, "format": "RGB888"}
+                main={"size": self.resolution, "format": "RGB888"},
+                queue=False,
+                buffer_count=2,
             )
             self._picam2.configure(config)
 
