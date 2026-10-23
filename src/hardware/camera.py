@@ -119,16 +119,25 @@ class Camera:
 
         self.is_connected = False
 
-    def set_exposure(self, exposure_us: int, gain: float) -> bool:
+    def set_exposure(self, exposure_us: int, gain: float, flush_frames: int = 2) -> bool:
         """
         Uppdaterar slutartid och förstärkning på en aktiv kameraström.
+        Om värdena redan stämmer görs ingenting.
+        Vid förändring skickas nya kontroller och kamerasensorns hårdvarurör
+        spolas (flush_frames) så att förändringen är 100 % aktiv till nästa bild.
         Returnerar True vid lyckad uppdatering, annars False.
         """
+        if not self.is_connected or self._picam2 is None:
+            self.exposure_us = exposure_us
+            self.gain = gain
+            return False
+
+        # Undvik onödiga registeroperationer och spolningar om värdena redan matchar
+        if self.exposure_us == exposure_us and abs(self.gain - gain) < 1e-3:
+            return True
+
         self.exposure_us = exposure_us
         self.gain = gain
-
-        if not self.is_connected or self._picam2 is None:
-            return False
 
         try:
             self._picam2.set_controls({
@@ -136,6 +145,9 @@ class Camera:
                 "AnalogueGain": self.gain,
                 "AeEnable": False,
             })
+            # Töm utestående bildrutor ur sensorns hårdvarubuffert
+            for _ in range(max(0, flush_frames)):
+                self._picam2.capture_array("main")
             return True
         except Exception as e:
             if self.verbose:
