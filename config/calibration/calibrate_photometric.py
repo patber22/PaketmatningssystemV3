@@ -2,14 +2,17 @@
 Fotometrisk kalibrering för Paketmätningssystem V3.
 
 Beräknar ljusriktningsvektorer (L1..L4) och relativa lampstyrkor (s1..s4)
-för båda kamerorna (CAM1 Vänster och CAM0 Höger) med hjälp av en bordtennisboll (40 mm).
+för båda kamerorna (CAM1 Vänster och CAM0 Höger) med hjälp av en vit pingisboll
+placerad på ett mörkt underlag (t.ex. 3D-skrivarens byggplatta).
+
 Resultatet sparas till config/calibration/data/photometric.json.
 
 Arkitektur:
 1. Tar en bild med alla lampor tända samtidigt (led_mode="all") för jämn belysning.
-2. Tar ett fotometriskt svep (Kanal 1 -> 2 -> 3 -> 4).
-3. Detekterar sfären automatiskt (eller använder manuella koordinater vid behov).
-4. Beräknar 3D-normalvektorer och relativa intensitetsskalor för alla 4 LED-kanaler.
+2. Tvåstegsdetektering:
+   - Mask 1: Identifierar det mörka underlaget och klipper bort den ljusa OSB-skivan.
+   - Mask 2: Lokaliserar den vita bollen inuti underlaget och mäter dess centrum och radie dynamiskt.
+3. Tar ett fotometriskt svep (Kanal 1 -> 2 -> 3 -> 4) och beräknar lampornas 3D-vektorer och styrkor.
 """
 
 import json
@@ -18,17 +21,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
-# ==============================================================================
-# 1. KONFIGURATION (Ändra vid behov)
-# ==============================================================================
-BALL_DIAMETER_MM: float = 40.0   # Standard bordtennisboll (40.0 mm)
-BALL_RADIUS_PX: float = 40.5     # Nominell optisk radie i pixlar vid ~630 mm avstånd
-
-# Manuella koordinater (cx, cy, radie_px). Sätt till None för automatisk detektering.
-# Vid behov kan man överstyra manuellt här (t.ex. vid extremt svåra ljusförhållanden):
-MANUAL_SPHERE_LEFT: Optional[Tuple[float, float, float]] = None
-MANUAL_SPHERE_RIGHT: Optional[Tuple[float, float, float]] = None
 
 # ==============================================================================
 # SÖKVÄGAR OCH IMPORTER
@@ -51,25 +43,18 @@ DEBUG_IMG_DIR = PROJECT_ROOT / "data" / "calibration" / "photometric"
 def find_sphere_circle(
     all_bgr: np.ndarray,
     camera_name: str,
-    manual_sphere: Optional[Tuple[float, float, float]] = None,
 ) -> Tuple[Optional[Tuple[float, float, float]], Optional[Tuple[int, int, int, int]]]:
     """
-    Tvåstegsdetektering:
-    1. Mask 1: Hittar mörkt underlag (t.ex. svart byggplatta/musmatta) och klipper bort all OSB.
-    2. Mask 2: Letar efter det vita runda objektet (pingisbollen) enbart inuti det mörka området.
-    Mäter sfärens verkliga radie helt dynamiskt utan hårdkodade pixelgränser.
+    Tvåstegsdetektering av pingisbollen:
+    1. Mask 1: Hittar det mörka underlaget (t.ex. svart byggplatta) och klipper bort OSB-bädden.
+    2. Mask 2: Hittar den vita bollen inuti underlaget och mäter dess verkliga centrum och radie.
     """
-    if manual_sphere is not None:
-        print(f"  -> {camera_name}: Använder manuellt angiven sfär: {manual_sphere}")
-        return manual_sphere, None
-
     gray = cv2.cvtColor(all_bgr, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (9, 9), 2)
-    h, w = gray.shape
 
     # --------------------------------------------------------------------------
-    # STEG 1 (Mask 1): Hitta den mörka byggplattan / underlaget
-    # OSB-skivan har ljushet ~130-150, mörk byggplatta har < 95
+    # STEG 1: Hitta mörkt underlag (byggplatta/musmatta)
+    # OSB-skivan är ljus (~130-150), mörk byggplatta är < 95
     # --------------------------------------------------------------------------
     plate_cnt = None
     bbox_dark = None
@@ -93,9 +78,8 @@ def find_sphere_circle(
         plate_mask[:, :] = 255
 
     # --------------------------------------------------------------------------
-    # STEG 2 (Mask 2): Hitta den vita bollen inuti det mörka underlaget
+    # STEG 2: Hitta den vita bollen inuti det mörka underlaget
     # --------------------------------------------------------------------------
-    # Pixlar som är ljusa och ligger innanför plattan
     white_mask = (blur > 115) & (plate_mask == 255)
     cnts_white, _ = cv2.findContours(white_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -112,7 +96,6 @@ def find_sphere_circle(
         circ = 4 * np.pi * (area / (perimeter * perimeter))
         (cx, cy), radius = cv2.minEnclosingCircle(c)
 
-        # Tillåt alla rimliga bollstorlekar (20 till 70 px) och premiera hög cirkularitet
         if 20.0 <= radius <= 70.0 and circ > 0.55:
             if circ > best_circ:
                 best_circ = circ
@@ -175,7 +158,7 @@ def compute_light_vectors_for_camera(
         unit_l = vec / norm if norm > 0 else np.array([0.0, 0.0, 1.0])
         light_vectors.append(unit_l.tolist())
 
-        # Total ljusflöde på sfären för relativ intensitet
+        # Totalt ljusflöde på sfären för relativ intensitet
         flux = float(np.sum(valid_pixels))
         flux_values.append(flux)
 
@@ -198,8 +181,7 @@ def main():
     print("=" * 65)
     print("  FOTOMETRISK KALIBRERING (Pingisboll / 4x IR LED)")
     print("=" * 65)
-    print(f"Bolldiameter: {BALL_DIAMETER_MM:.1f} mm")
-    print(f"Resultatfil:  {OUTPUT_FILE}\n")
+    print(f"Resultatfil: {OUTPUT_FILE}\n")
 
     print("[1/4] Ansluter till VisionRig (kameror + 4-kanals LED)...")
     with VisionRig(verbose=False) as rig:
@@ -207,12 +189,13 @@ def main():
             print("[FEL] Kunde inte ansluta till hårdvaran i VisionRig.")
             return
 
-        print("[OK] Hårdvara redo. Placera pingisbollen mitt på mätbädden.")
+        print("[OK] Hårdvara redo.")
+        print("     Instruktion: Lägg mörkt underlag (t.ex. byggplatta) på bädden med vit pingisboll ovanpå.")
         print("     Tryck ENTER för att starta kalibreringen: ", end="")
         input()
 
-        # [2/4] Bild med alla lampor tända för symmetrisk sfärdetektering
-        print("\n[2/4] Tar bild med ALLA lampor tända (jämn sfärbelysning)...")
+        # [2/4] Bild med alla lampor tända för jämn sfärbelysning
+        print("\n[2/4] Tar bild med ALLA lampor tända (jämn belysning)...")
         all_pair = rig.capture_stereo(led_mode="all")
         if not all_pair.is_valid():
             print("[FEL] Kunde inte ta bild med alla lampor tända.")
@@ -237,7 +220,7 @@ def main():
 
     DEBUG_IMG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1. Spara alla råbilder omedelbart för full insyn
+    # Spara alla råbilder omedelbart för full insyn och felsökning
     for cam_name, img_all in cams_all.items():
         cv2.imwrite(str(DEBUG_IMG_DIR / f"raw_all_{cam_name}.jpg"), img_all)
     for cam_name, bgr_list in cams_sweep.items():
@@ -247,13 +230,8 @@ def main():
     print("\n[4/4] Beräknar ljusvektorer för båda kamerorna...")
     calib_results = {
         "calibrated_at": datetime.now().isoformat(),
-        "ball_diameter_mm": BALL_DIAMETER_MM,
+        "ball_diameter_mm": 40.0,
         "cameras": {},
-    }
-
-    manual_spheres = {
-        "left_cam1": MANUAL_SPHERE_LEFT,
-        "right_cam0": MANUAL_SPHERE_RIGHT,
     }
 
     for cam_name in ["left_cam1", "right_cam0"]:
@@ -261,11 +239,10 @@ def main():
         bgr_sweep = cams_sweep[cam_name]
         grays_sweep = [cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) for im in bgr_sweep]
 
-        circle, bbox_dark = find_sphere_circle(img_all, cam_name, manual_spheres.get(cam_name))
+        circle, bbox_dark = find_sphere_circle(img_all, cam_name)
         if circle is None:
             print(f"  [FEL] Kunde inte hitta pingisbollen i {cam_name}!")
             print(f"        Kontrollera {DEBUG_IMG_DIR / f'raw_all_{cam_name}.jpg'}.")
-            print(f"        Tips: Placera bollen mitt på det mörka underlaget (t.ex. 3D-skrivarens byggplatta).")
             return
 
         cx, cy, radius = circle
@@ -275,7 +252,7 @@ def main():
         cam_calib = compute_light_vectors_for_camera(grays_sweep, cx, cy, radius, cam_name)
         calib_results["cameras"][cam_name] = cam_calib
 
-        # Skapa en tydlig debug-bild på 'all_lit'-bilden med byggplattans box, sfärcirkel och lampvektorer
+        # Skapa debug-bild med byggplattans box, sfärcirkel och lampvektorer
         debug_vis = img_all.copy()
 
         # Rita bounding box runt det mörka underlaget (om det hittades)
@@ -284,7 +261,7 @@ def main():
             cv2.rectangle(debug_vis, (bx, by), (bx + bw, by + bh), (255, 180, 0), 2)
             cv2.putText(
                 debug_vis,
-                "Mork byggplatta",
+                "Morkt underlag",
                 (bx + 8, by + 24),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
