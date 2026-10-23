@@ -52,54 +52,73 @@ def find_sphere_circle(
     all_bgr: np.ndarray,
     camera_name: str,
     manual_sphere: Optional[Tuple[float, float, float]] = None,
-) -> Optional[Tuple[float, float, float]]:
+) -> Tuple[Optional[Tuple[float, float, float]], Optional[Tuple[int, int, int, int]]]:
     """
-    Hittar sfärens cirkel (cx, cy, radie) i bilden där alla lampor lyser samtidigt.
-    Använder adaptiv tröskling och kontursökning anpassad för en 40 mm sfär.
+    Tvåstegsdetektering:
+    1. Mask 1: Hittar mörkt underlag (t.ex. svart byggplatta/musmatta) och klipper bort all OSB.
+    2. Mask 2: Letar efter det vita runda objektet (pingisbollen) enbart inuti det mörka området.
+    Mäter sfärens verkliga radie helt dynamiskt utan hårdkodade pixelgränser.
     """
     if manual_sphere is not None:
         print(f"  -> {camera_name}: Använder manuellt angiven sfär: {manual_sphere}")
-        return manual_sphere
+        return manual_sphere, None
 
     gray = cv2.cvtColor(all_bgr, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (7, 7), 1.5)
+    blur = cv2.GaussianBlur(gray, (9, 9), 2)
     h, w = gray.shape
-    cx_nom, cy_nom = w // 2, h // 2
-    margin_x, margin_y = 150, 100
 
-    best_candidate = None
-    best_score = -1e9
+    # --------------------------------------------------------------------------
+    # STEG 1 (Mask 1): Hitta den mörka byggplattan / underlaget
+    # OSB-skivan har ljushet ~130-150, mörk byggplatta har < 95
+    # --------------------------------------------------------------------------
+    plate_cnt = None
+    bbox_dark = None
+    plate_mask = np.zeros_like(gray, dtype=np.uint8)
 
-    # Tröskel-sweep kring bollens kantintensitet mot bädden
-    for th_val in range(165, 186, 2):
-        _, thresh = cv2.threshold(blur, th_val, 255, cv2.THRESH_BINARY)
-        # Nollställ ytterkanter (bordskanter / bakgrund)
-        thresh[:margin_y, :] = 0; thresh[-margin_y:, :] = 0
-        thresh[:, :margin_x] = 0; thresh[:, -margin_x:] = 0
+    for dark_th in [95, 105, 85, 75]:
+        _, dark_binary = cv2.threshold(blur, dark_th, 255, cv2.THRESH_BINARY_INV)
+        cnts_dark, _ = cv2.findContours(dark_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        large_dark = [c for c in cnts_dark if cv2.contourArea(c) > 6000]
+        if large_dark:
+            plate_cnt = max(large_dark, key=cv2.contourArea)
+            bx, by, bw, bh = cv2.boundingRect(plate_cnt)
+            bbox_dark = (bx, by, bw, bh)
+            cv2.drawContours(plate_mask, [plate_cnt], -1, 255, -1)
+            break
 
-        cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in cnts:
-            area = cv2.contourArea(c)
-            if not (2500 <= area <= 6500):
-                continue
-            perimeter = cv2.arcLength(c, True)
-            if perimeter == 0:
-                continue
-            circ = 4 * np.pi * (area / (perimeter * perimeter))
-            (cx, cy), radius = cv2.minEnclosingCircle(c)
-            dist_to_center = np.hypot(cx - cx_nom, cy - cy_nom)
+    if plate_cnt is not None:
+        print(f"  -> {camera_name}: Mörkt underlag identifierat på ({bbox_dark[0]}, {bbox_dark[1]}), storlek {bbox_dark[2]}x{bbox_dark[3]} px")
+    else:
+        print(f"  -> {camera_name}: [INFO] Inget separat mörkt underlag hittades, söker i hela bilden...")
+        plate_mask[:, :] = 255
 
-            if 34.0 <= radius <= 46.0 and circ > 0.55:
-                # Hög cirkularitet och radie nära 40 px premieras
-                r_diff = abs(radius - BALL_RADIUS_PX)
-                score = (circ * 100.0) - (r_diff * 5.0) - (dist_to_center * 0.05)
-                if score > best_score:
-                    best_score = score
-                    # Använd nominell BALL_RADIUS_PX om detekterad radie är nära
-                    final_r = BALL_RADIUS_PX if 36.0 <= radius <= 44.0 else float(radius)
-                    best_candidate = (float(cx), float(cy), final_r)
+    # --------------------------------------------------------------------------
+    # STEG 2 (Mask 2): Hitta den vita bollen inuti det mörka underlaget
+    # --------------------------------------------------------------------------
+    # Pixlar som är ljusa och ligger innanför plattan
+    white_mask = (blur > 115) & (plate_mask == 255)
+    cnts_white, _ = cv2.findContours(white_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    return best_candidate
+    best_ball = None
+    best_circ = 0.0
+
+    for c in cnts_white:
+        area = cv2.contourArea(c)
+        if area < 600 or area > 15000:
+            continue
+        perimeter = cv2.arcLength(c, True)
+        if perimeter == 0:
+            continue
+        circ = 4 * np.pi * (area / (perimeter * perimeter))
+        (cx, cy), radius = cv2.minEnclosingCircle(c)
+
+        # Tillåt alla rimliga bollstorlekar (20 till 70 px) och premiera hög cirkularitet
+        if 20.0 <= radius <= 70.0 and circ > 0.55:
+            if circ > best_circ:
+                best_circ = circ
+                best_ball = (float(cx), float(cy), float(radius))
+
+    return best_ball, bbox_dark
 
 
 def compute_light_vectors_for_camera(
@@ -242,11 +261,11 @@ def main():
         bgr_sweep = cams_sweep[cam_name]
         grays_sweep = [cv2.cvtColor(im, cv2.COLOR_BGR2GRAY) for im in bgr_sweep]
 
-        circle = find_sphere_circle(img_all, cam_name, manual_spheres.get(cam_name))
+        circle, bbox_dark = find_sphere_circle(img_all, cam_name, manual_spheres.get(cam_name))
         if circle is None:
             print(f"  [FEL] Kunde inte hitta pingisbollen i {cam_name}!")
             print(f"        Kontrollera {DEBUG_IMG_DIR / f'raw_all_{cam_name}.jpg'}.")
-            print(f"        Tips: Du kan ange position manuellt via MANUAL_SPHERE_{'LEFT' if 'left' in cam_name else 'RIGHT'} i filens topp.")
+            print(f"        Tips: Placera bollen mitt på det mörka underlaget (t.ex. 3D-skrivarens byggplatta).")
             return
 
         cx, cy, radius = circle
@@ -256,9 +275,35 @@ def main():
         cam_calib = compute_light_vectors_for_camera(grays_sweep, cx, cy, radius, cam_name)
         calib_results["cameras"][cam_name] = cam_calib
 
-        # Skapa en tydlig debug-bild på 'all_lit'-bilden med sfärcirkel och de 4 lampvektorerna
+        # Skapa en tydlig debug-bild på 'all_lit'-bilden med byggplattans box, sfärcirkel och lampvektorer
         debug_vis = img_all.copy()
+
+        # Rita bounding box runt det mörka underlaget (om det hittades)
+        if bbox_dark is not None:
+            bx, by, bw, bh = bbox_dark
+            cv2.rectangle(debug_vis, (bx, by), (bx + bw, by + bh), (255, 180, 0), 2)
+            cv2.putText(
+                debug_vis,
+                "Mork byggplatta",
+                (bx + 8, by + 24),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 180, 0),
+                2,
+            )
+
+        # Rita ut sfärcirkeln kring bollen
         cv2.circle(debug_vis, (int(cx), int(cy)), int(radius), (0, 255, 0), 2)
+        cv2.putText(
+            debug_vis,
+            f"Boll r={radius:.1f}px",
+            (int(cx) - 45, int(cy) - int(radius) - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 255, 0),
+            1,
+        )
+
         colors = [(0, 0, 255), (0, 255, 255), (255, 0, 0), (255, 0, 255)]
         for ch_idx, pt in enumerate(cam_calib["highlight_points"]):
             cv2.circle(debug_vis, (int(pt[0]), int(pt[1])), 4, colors[ch_idx], -1)
