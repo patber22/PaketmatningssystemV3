@@ -19,7 +19,7 @@ from pathlib import Path
 # ==============================================================================
 CHESSBOARD_COLS: int = 9         # Antal INRE hörn horisontellt
 CHESSBOARD_ROWS: int = 6         # Antal INRE hörn vertikalt
-SQUARE_SIZE_MM: float = 25.0     # Rutans bredd/höjd i millimeter (mät på din skärm)
+SQUARE_SIZE_MM: float = 19.5     # Rutans bredd/höjd i millimeter (mät på din skärm)
 TARGET_PAIRS: int = 15           # Antal bildpar att samla in
 
 # Exponering för avläsning av skärm i rumsljus (släckta IR-lampor)
