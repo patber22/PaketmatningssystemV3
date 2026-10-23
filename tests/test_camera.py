@@ -106,7 +106,9 @@ class TestCamera(unittest.TestCase):
         mock_picam.set_controls.assert_called_once_with({
             "ExposureTime": 35000,
             "AnalogueGain": 6.0,
-            "AeEnable": False
+            "AeEnable": False,
+            "AwbEnable": False,
+            "ColourGains": (1.0, 1.0),
         })
 
     def test_context_manager_cleanup(self):

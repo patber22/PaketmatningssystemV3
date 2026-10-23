@@ -348,10 +348,16 @@ class CameraFramePair:
         except (ValueError, TypeError):
             return cls.invalid()
 
-    def to_jpeg(self, path: Union[str, Path] = Path(".")) -> Tuple[Optional[Path], Optional[Path]]:
-        """Sparar båda bilderna i paret (t.ex. {ts}_CAM1.jpg och {ts}_CAM0.jpg)."""
-        left_path = self.left.to_jpeg(path) if self.left.is_valid() else None
-        right_path = self.right.to_jpeg(path) if self.right.is_valid() else None
+    def to_jpeg(
+        self,
+        path: Union[str, Path] = Path("."),
+        prefix: str = ""
+    ) -> Tuple[Optional[Path], Optional[Path]]:
+        """Sparar båda bilderna i paret (t.ex. {prefix}CAM1.jpg och {prefix}CAM0.jpg)."""
+        fn_left = f"{prefix}CAM1.jpg" if prefix else None
+        fn_right = f"{prefix}CAM0.jpg" if prefix else None
+        left_path = self.left.to_jpeg(path, filename=fn_left) if self.left.is_valid() else None
+        right_path = self.right.to_jpeg(path, filename=fn_right) if self.right.is_valid() else None
         return (left_path, right_path)
 
     def __str__(self) -> str:
@@ -494,14 +500,18 @@ class PhotometricSweep:
             raise ValueError(f"Ogiltig kanal {channel}. Välj 1, 2, 3 eller 4.")
         return mapping[channel]
 
-    def to_jpeg(self, path: Union[str, Path] = Path(".")) -> Dict[int, Tuple[Optional[Path], Optional[Path]]]:
-        """Sparar alla fyra kanalernas bildpar till disk."""
+    def to_jpeg(
+        self,
+        path: Union[str, Path] = Path("."),
+        prefix: str = "photo_"
+    ) -> Dict[int, Tuple[Optional[Path], Optional[Path]]]:
+        """Sparar alla fyra kanalernas bildpar till disk med unika filnamn."""
         target_dir = Path(path)
         return {
-            1: self.ch1.to_jpeg(target_dir),
-            2: self.ch2.to_jpeg(target_dir),
-            3: self.ch3.to_jpeg(target_dir),
-            4: self.ch4.to_jpeg(target_dir),
+            1: self.ch1.to_jpeg(target_dir, prefix=f"{prefix}ch1_"),
+            2: self.ch2.to_jpeg(target_dir, prefix=f"{prefix}ch2_"),
+            3: self.ch3.to_jpeg(target_dir, prefix=f"{prefix}ch3_"),
+            4: self.ch4.to_jpeg(target_dir, prefix=f"{prefix}ch4_"),
         }
 
     def __str__(self) -> str:
@@ -558,11 +568,13 @@ class VisionCapture:
             return cls.invalid()
 
     def to_jpeg(self, path: Union[str, Path] = Path(".")) -> Dict[str, Any]:
-        """Sparar både stereopar och fotometriskt svep till disk."""
+        """Sparar både stereopar och fotometriskt svep till disk i separata undermappar."""
         target_dir = Path(path)
+        stereo_dir = target_dir / "stereo"
+        photo_dir = target_dir / "photometric"
         return {
-            "stereo": self.stereo.to_jpeg(target_dir),
-            "photometric": self.photometric.to_jpeg(target_dir),
+            "stereo": self.stereo.to_jpeg(stereo_dir, prefix="stereo_"),
+            "photometric": self.photometric.to_jpeg(photo_dir, prefix="photo_"),
         }
 
     def __str__(self) -> str:
