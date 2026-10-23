@@ -93,18 +93,7 @@ class VisionRig:
             self.cameras.exposure_us != target_exposure_us
             or abs(self.cameras.gain - target_gain) > 1e-3
         ):
-            ok = self.cameras.set_exposure(target_exposure_us, target_gain)
-            # Vid ändring av analog gain/slutartid behöver sensorn ca 2 bildcykler
-            # för att stabilisera registren och spola bort gamla bildrutor
-            time.sleep(0.06)
-            for cam in getattr(self.cameras, "_cameras", {}).values():
-                picam2 = getattr(cam, "_picam2", None)
-                if picam2 is not None:
-                    try:
-                        _ = picam2.capture_array("main")
-                    except Exception:
-                        pass
-            return ok
+            return self.cameras.set_exposure(target_exposure_us, target_gain)
         return True
 
     def capture_stereo(
