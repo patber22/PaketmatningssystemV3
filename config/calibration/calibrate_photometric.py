@@ -227,7 +227,7 @@ def main():
 
         # [2/4] Bild med alla lampor tända för symmetrisk sfärdetektering
         print("\n[2/4] Tar bild med ALLA lampor tända (jämn sfärbelysning)...")
-        all_pair = rig.capture_stereo_pair(led_mode="all")
+        all_pair = rig.capture_stereo(led_mode="all")
         if not all_pair.is_valid():
             print("[FEL] Kunde inte ta bild med alla lampor tända.")
             return
