@@ -107,6 +107,8 @@ class TestCamera(unittest.TestCase):
             "ExposureTime": 35000,
             "AnalogueGain": 6.0,
             "AeEnable": False,
+            "AwbEnable": False,
+            "ColourGains": (1.0, 1.0),
         })
 
     def test_context_manager_cleanup(self):

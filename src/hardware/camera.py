@@ -84,11 +84,14 @@ class Camera:
             )
             self._picam2.configure(config)
 
-            # Lås manuell exponering och analog gain (stäng av AEC/AGC)
+            # Lås manuell exponering, analog gain och stäng av auto-vitbalans (AWB)
+            # Fast ColourGains=(1.0, 1.0) eliminerar blå/lila färgstick och digital mättning i mörka miljöer
             self._picam2.set_controls({
                 "ExposureTime": self.exposure_us,
                 "AnalogueGain": self.gain,
                 "AeEnable": False,
+                "AwbEnable": False,
+                "ColourGains": (1.0, 1.0),
             })
 
             # Starta kamerasensorns ström i bakgrunden
@@ -153,6 +156,8 @@ class Camera:
                 "ExposureTime": self.exposure_us,
                 "AnalogueGain": self.gain,
                 "AeEnable": False,
+                "AwbEnable": False,
+                "ColourGains": (1.0, 1.0),
             })
             if flush_frames > 0:
                 self.flush(flush_frames)
