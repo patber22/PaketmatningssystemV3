@@ -17,6 +17,7 @@ from src.core.models import (
     WeightReading,
     PhotometricSweep,
     VisionCapture,
+    StereoDepthResult,
 )
 import numpy as np
 import cv2
@@ -635,7 +636,99 @@ class TestVisionCapture(unittest.TestCase):
         self.assertIn("VisionCapture", str(cap))
 
 
+class TestStereoDepthResult(unittest.TestCase):
+    """Testsvit för StereoDepthResult dataklassen."""
 
+    def test_default_values(self):
+        """Verifiera att standardvärden är säkra och ogiltiga vid tom initiering."""
+        res = StereoDepthResult()
+        self.assertFalse(res.is_valid())
+        self.assertIsNone(res.disparity)
+        self.assertIsNone(res.point_cloud)
+        self.assertIsNone(res.rectified_left)
+        self.assertEqual(res.timestamp, 0.0)
+        self.assertEqual(res.execution_time_ms, 0.0)
+
+    def test_invalid_factory(self):
+        """Verifiera att StereoDepthResult.invalid() skapar ett ogiltigt objekt."""
+        inv = StereoDepthResult.invalid()
+        self.assertFalse(inv.is_valid())
+        self.assertIsNone(inv.disparity)
+        data = inv.to_dict()
+        self.assertFalse(data["is_valid"])
+
+    def test_valid_operations(self):
+        """Verifiera maskning, punktmolnsfiltrering och to_dict metadata."""
+        h, w = 10, 10
+        # Skapa disparitet där 70 pixlar är giltiga (>0) och 30 är ogiltiga (-1)
+        disp = np.full((h, w), -1.0, dtype=np.float32)
+        disp[:7, :] = 25.5
+
+        # Skapa punktmoln där giltiga pixlar har Z mellan 600 och 700 mm
+        pc = np.zeros((h, w, 3), dtype=np.float32)
+        pc[:7, :, 0] = np.arange(w)
+        pc[:7, :, 1] = np.arange(7)[:, None]
+        pc[:7, :, 2] = 650.0
+
+        rect = np.full((h, w, 3), 128, dtype=np.uint8)
+
+        res = StereoDepthResult(
+            disparity=disp,
+            point_cloud=pc,
+            rectified_left=rect,
+            timestamp=12345.0,
+            execution_time_ms=35.5,
+            _is_valid=True,
+        )
+
+        self.assertTrue(res.is_valid())
+
+        # Testa giltighetsmask
+        mask = res.get_valid_mask()
+        self.assertEqual(mask.shape, (h, w))
+        self.assertEqual(int(np.count_nonzero(mask)), 70)
+
+        # Testa get_valid_points
+        valid_pts = res.get_valid_points()
+        self.assertEqual(valid_pts.shape, (70, 3))
+        self.assertEqual(valid_pts[0, 2], 650.0)
+
+        # Testa to_dict
+        d = res.to_dict()
+        self.assertTrue(d["is_valid"])
+        self.assertEqual(d["resolution"], [w, h])
+        self.assertEqual(d["valid_pixels_count"], 70)
+        self.assertEqual(d["valid_pixels_percent"], 70.0)
+        self.assertEqual(d["depth_stats"]["min_mm"], 650.0)
+        self.assertEqual(d["depth_stats"]["max_mm"], 650.0)
+        self.assertEqual(d["depth_stats"]["mean_mm"], 650.0)
+
+    def test_to_jpeg(self):
+        """Verifiera att to_jpeg sparar rektifierad bild och färgkodad disparitet."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            disp = np.full((20, 20), 15.0, dtype=np.float32)
+            disp[0, 0] = -1.0  # en ogiltig pixel
+            pc = np.full((20, 20, 3), 600.0, dtype=np.float32)
+            rect = np.full((20, 20, 3), 100, dtype=np.uint8)
+
+            res = StereoDepthResult(
+                disparity=disp,
+                point_cloud=pc,
+                rectified_left=rect,
+                _is_valid=True,
+            )
+
+            saved = res.to_jpeg(tmp_path)
+            self.assertIsNotNone(saved["rectified_left"])
+            self.assertIsNotNone(saved["disparity"])
+            self.assertTrue(saved["rectified_left"].exists())
+            self.assertTrue(saved["disparity"].exists())
+
+    def test_str_representation(self):
+        """Verifiera __str__ representation."""
+        res = StereoDepthResult.invalid()
+        self.assertIn("StereoDepthResult", str(res))
 
 
 if __name__ == "__main__":

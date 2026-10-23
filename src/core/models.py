@@ -582,6 +582,147 @@ class VisionCapture:
         return f"VisionCapture: {self.to_dict()}"
 
 
+@dataclass
+class StereoDepthResult:
+    """
+    Representerar resultatet från stereodjupsberäkningen (StereoDepthEstimator).
+
+    Håller den rektifierade vänsterbilden, tät disparitetskarta och det kompletta
+    metriska 3D-punktmolnet (X, Y, Z i mm) samt beräkningstidsmetadata.
+    """
+    disparity: Optional[np.ndarray] = None          # (H, W) float32 i pixlar (ogiltiga < 0)
+    point_cloud: Optional[np.ndarray] = None        # (H, W, 3) float32 metriska koordinater i mm
+    rectified_left: Optional[np.ndarray] = None     # (H, W, 3) uint8 rektifierad bild (visuell referens)
+    timestamp: float = 0.0                          # UNIX-tidsstämpel i sekunder
+    execution_time_ms: float = 0.0                  # Total beräkningstid i millisekunder
+    _is_valid: bool = False
+
+    def is_valid(self) -> bool:
+        """True om disparitet och punktmoln finns i RAM och beräkningen lyckades."""
+        if not self._is_valid or self.disparity is None or self.point_cloud is None:
+            return False
+        return bool(self.disparity.size > 0 and self.point_cloud.size > 0)
+
+    @classmethod
+    def invalid(cls) -> "StereoDepthResult":
+        """Null Object Pattern: Skapar ett standardiserat ogiltigt stereodjupsresultat."""
+        return cls(
+            disparity=None,
+            point_cloud=None,
+            rectified_left=None,
+            timestamp=time.time(),
+            execution_time_ms=0.0,
+            _is_valid=False,
+        )
+
+    def get_valid_mask(self) -> np.ndarray:
+        """
+        Returnerar en boolesk 2D-mask (H, W) där True indikerar giltigt djup.
+        """
+        if self.disparity is None:
+            return np.zeros((0, 0), dtype=bool)
+        return (self.disparity > 0) & np.isfinite(self.disparity)
+
+    def get_valid_points(self) -> np.ndarray:
+        """
+        Returnerar en 2D-matris (N, 3) med enbart giltiga 3D-punkter i millimeter.
+        Perfekt för planpassning, klustring och bounding box-beräkningar.
+        """
+        if not self.is_valid() or self.point_cloud is None:
+            return np.zeros((0, 3), dtype=np.float32)
+
+        mask = self.get_valid_mask()
+        # Säkerställ även att Z-värdena är finita och rimliga (> 0 och < 5000 mm)
+        z_valid = np.isfinite(self.point_cloud[:, :, 2]) & (self.point_cloud[:, :, 2] > 0) & (self.point_cloud[:, :, 2] < 5000)
+        combined_mask = mask & z_valid
+        return self.point_cloud[combined_mask]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialiserar beräkningsmetadata för loggar och JSON.
+        Megabyte av råa 3D-matriser exkluderas; istället sparas täckning och djupstatistik.
+        """
+        if not self.is_valid():
+            return {
+                "is_valid": False,
+                "timestamp": self.timestamp,
+                "execution_time_ms": round(self.execution_time_ms, 2),
+            }
+
+        valid_mask = self.get_valid_mask()
+        total_pixels = valid_mask.size
+        valid_count = int(np.count_nonzero(valid_mask))
+        valid_percent = round((valid_count / total_pixels) * 100.0, 2) if total_pixels > 0 else 0.0
+
+        depth_stats = {"min_mm": 0.0, "max_mm": 0.0, "mean_mm": 0.0}
+        valid_points = self.get_valid_points()
+        if len(valid_points) > 0:
+            z_vals = valid_points[:, 2]
+            depth_stats = {
+                "min_mm": round(float(np.min(z_vals)), 2),
+                "max_mm": round(float(np.max(z_vals)), 2),
+                "mean_mm": round(float(np.mean(z_vals)), 2),
+            }
+
+        h, w = self.disparity.shape[:2] if self.disparity is not None else (0, 0)
+
+        return {
+            "is_valid": True,
+            "timestamp": self.timestamp,
+            "execution_time_ms": round(self.execution_time_ms, 2),
+            "resolution": [w, h],
+            "valid_pixels_count": valid_count,
+            "valid_pixels_percent": valid_percent,
+            "depth_stats": depth_stats,
+            "has_point_cloud": self.point_cloud is not None,
+            "has_rectified_left": self.rectified_left is not None,
+        }
+
+    def to_jpeg(
+        self,
+        path: Union[str, Path] = Path("."),
+        prefix: str = "stereo_depth_"
+    ) -> Dict[str, Optional[Path]]:
+        """
+        Sparar rektifierad bild och en färgkodad disparitetskarta (Turbo) för felsökning.
+        """
+        target_dir = Path(path)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        results: Dict[str, Optional[Path]] = {"rectified_left": None, "disparity": None}
+
+        # 1. Spara rektifierad vänsterbild
+        if self.rectified_left is not None and self.rectified_left.size > 0:
+            rect_path = target_dir / f"{prefix}rectified_left.jpg"
+            cv2.imwrite(str(rect_path), self.rectified_left)
+            results["rectified_left"] = rect_path
+
+        # 2. Spara färgkodad disparitetskarta
+        if self.disparity is not None and self.disparity.size > 0:
+            valid_mask = self.get_valid_mask()
+            disp_vis = np.zeros_like(self.disparity, dtype=np.uint8)
+            if np.any(valid_mask):
+                valid_disp = self.disparity[valid_mask]
+                d_min, d_max = np.min(valid_disp), np.max(valid_disp)
+                if d_max > d_min:
+                    normalized = (self.disparity - d_min) / (d_max - d_min) * 255.0
+                    disp_vis[valid_mask] = np.clip(normalized[valid_mask], 0, 255).astype(np.uint8)
+
+            color_disp = cv2.applyColorMap(disp_vis, cv2.COLORMAP_TURBO)
+            # Sätt ogiltiga pixlar till svart
+            color_disp[~valid_mask] = (0, 0, 0)
+
+            disp_path = target_dir / f"{prefix}disparity_color.jpg"
+            cv2.imwrite(str(disp_path), color_disp)
+            results["disparity"] = disp_path
+
+        return results
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"StereoDepthResult: {self.to_dict()}"
+
+
+
 
 
 
