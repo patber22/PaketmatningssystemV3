@@ -119,12 +119,21 @@ class Camera:
 
         self.is_connected = False
 
-    def set_exposure(self, exposure_us: int, gain: float, flush_frames: int = 3) -> bool:
+    def flush(self, count: int = 1) -> None:
+        """Tömmer N bildrutor ur kamerasensorns hårdvarurör."""
+        if self.is_connected and self._picam2 is not None:
+            try:
+                for _ in range(max(0, count)):
+                    self._picam2.capture_array("main")
+            except Exception:
+                pass
+
+    def set_exposure(self, exposure_us: int, gain: float, flush_frames: int = 0) -> bool:
         """
         Uppdaterar slutartid och förstärkning på en aktiv kameraström.
         Om värdena redan stämmer görs ingenting.
-        Vid förändring skickas nya kontroller och kamerasensorns hårdvarurör
-        spolas (flush_frames) så att förändringen är 100 % aktiv till nästa bild.
+        Vid förändring skickas nya kontroller omedelbart.
+        Om flush_frames > 0 spolas hårdvaruröret.
         Returnerar True vid lyckad uppdatering, annars False.
         """
         if not self.is_connected or self._picam2 is None:
@@ -145,9 +154,8 @@ class Camera:
                 "AnalogueGain": self.gain,
                 "AeEnable": False,
             })
-            # Töm utestående bildrutor ur sensorns hårdvarubuffert
-            for _ in range(max(0, flush_frames)):
-                self._picam2.capture_array("main")
+            if flush_frames > 0:
+                self.flush(flush_frames)
             return True
         except Exception as e:
             if self.verbose:

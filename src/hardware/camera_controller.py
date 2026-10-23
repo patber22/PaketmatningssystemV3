@@ -60,14 +60,38 @@ class CameraController:
         """Returnerar True om båda kamerorna är fysiskt anslutna och aktiva."""
         return all(cam.is_connected for cam in self._cameras.values())
 
-    def set_exposure(self, exposure_us: int, gain: float) -> bool:
+    def set_exposure(self, exposure_us: int, gain: float, flush_frames: int = 3) -> bool:
         """
-        Justerar slutartid och förstärkning på båda kamerorna samtidigt
-        för att hålla stereoparet 100 % optiskt matchat.
+        Justerar slutartid och förstärkning på båda kamerorna synkront.
+        1. Kontrollerar om värdena redan matchar nuvarande (gör ingenting och ingen flush om samma).
+        2. Skickar nya kontroller omedelbart till båda kamerorna (ingen väntan mellan dem).
+        3. Spolar bildrutor i synkroniserade par (CAM1 sedan CAM0) så att
+           båda kamerornas hårdvarurör töms samtidigt i lockstep.
         """
+        # Kontrollera om värdena redan matchar (undvik onödig registeroperation och flush)
+        if self.exposure_us == exposure_us and abs(self.gain - gain) < 1e-3:
+            all_match = all(
+                cam.exposure_us == exposure_us and abs(cam.gain - gain) < 1e-3
+                for cam in self._cameras.values()
+            )
+            if all_match:
+                return True
+
         self.exposure_us = exposure_us
         self.gain = gain
+
+        # 1. Skicka kontroller till båda kamerorna omedelbart
         results = [cam.set_exposure(exposure_us, gain) for cam in self._cameras.values()]
+
+        # 2. Spola båda kamerornas hårdvarurör synkront i par
+        if all(results) and flush_frames > 0:
+            for _ in range(flush_frames):
+                for cid in ["CAM1", "CAM0"]:
+                    cam = self._cameras.get(cid)
+                    if cam is not None and getattr(cam, "is_connected", False):
+                        if hasattr(cam, "flush"):
+                            cam.flush(1)
+
         return all(results)
 
     def set_single_exposure(self, camera_id: str, exposure_us: int, gain: float) -> bool:
