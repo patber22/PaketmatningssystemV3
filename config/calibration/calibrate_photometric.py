@@ -2,14 +2,14 @@
 Fotometrisk kalibrering för Paketmätningssystem V3.
 
 Beräknar ljusriktningsvektorer (L1..L4) och relativa lampstyrkor (s1..s4)
-för båda kamerorna (CAM1 Vänster och CAM0 Höger) med hjälp av en vit pingisboll.
+för båda kamerorna (CAM1 Vänster och CAM0 Höger) med hjälp av en bordtennisboll (40 mm).
 Resultatet sparas till config/calibration/data/photometric.json.
 
 Arkitektur:
-1. Tar en stereobild med alla 4 lampor tända samtidigt (led_mode="all").
-   Bollen belyses jämnt utan vandrande skuggor och identifieras som en perfekt cirkel.
+1. Tar en bild med alla lampor tända samtidigt (led_mode="all") för jämn belysning.
 2. Tar ett fotometriskt svep (Kanal 1 -> 2 -> 3 -> 4).
-   Använder den funna sfärens geometri för att räkna ut lampornas 3D-vektorer och intensiteter.
+3. Detekterar sfären automatiskt (eller använder manuella koordinater vid behov).
+4. Beräknar 3D-normalvektorer och relativa intensitetsskalor för alla 4 LED-kanaler.
 """
 
 import json
@@ -23,11 +23,12 @@ from typing import Dict, List, Optional, Tuple
 # 1. KONFIGURATION (Ändra vid behov)
 # ==============================================================================
 BALL_DIAMETER_MM: float = 40.0   # Standard bordtennisboll (40.0 mm)
+BALL_RADIUS_PX: float = 40.5     # Nominell optisk radie i pixlar vid ~630 mm avstånd
 
-# Om du vill ange bollens position manuellt per kamera: (cx, cy, radie_px)
-# Sätt till None för automatisk detektering i den jämnt belysta bilden
-MANUAL_SPHERE_LEFT: Optional[Tuple[float, float, float]] = None   # t.ex. (820.0, 616.0, 38.0)
-MANUAL_SPHERE_RIGHT: Optional[Tuple[float, float, float]] = None  # t.ex. (820.0, 616.0, 38.0)
+# Manuella koordinater (cx, cy, radie_px). Sätt till None för automatisk detektering.
+# Vid behov kan du låsa positionen manuellt här:
+MANUAL_SPHERE_LEFT: Optional[Tuple[float, float, float]] = (869.0, 519.5, 40.5)
+MANUAL_SPHERE_RIGHT: Optional[Tuple[float, float, float]] = (712.2, 547.2, 40.0)
 
 # ==============================================================================
 # SÖKVÄGAR OCH IMPORTER
@@ -53,68 +54,33 @@ def find_sphere_circle(
     manual_sphere: Optional[Tuple[float, float, float]] = None,
 ) -> Optional[Tuple[float, float, float]]:
     """
-    Hittar sfärens cirkel (cx, cy, radie) i bilden där alla 4 lampor lyser samtidigt.
-    I denna bild är bollen jämnt upplyst från alla håll utan vandrande skuggor
-    och framträder som en ljus, cirkulär skiva.
+    Hittar sfärens cirkel (cx, cy, radie) i bilden där alla lampor lyser samtidigt.
+    Använder adaptiv tröskling och kontursökning anpassad för en 40 mm sfär.
     """
     if manual_sphere is not None:
         print(f"  -> {camera_name}: Använder manuellt angiven sfär: {manual_sphere}")
         return manual_sphere
 
     gray = cv2.cvtColor(all_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (7, 7), 1.5)
     h, w = gray.shape
     cx_nom, cy_nom = w // 2, h // 2
-    margin = 40
-
-    blur = cv2.GaussianBlur(gray, (9, 9), 2)
-    y_coords, x_coords = np.ogrid[:h, :w]
-
-    # Metod 1: HoughCircles på den jämnt belysta bilden
-    circles = cv2.HoughCircles(
-        blur,
-        cv2.HOUGH_GRADIENT,
-        dp=1.0,
-        minDist=45,
-        param1=50,
-        param2=18,
-        minRadius=24,
-        maxRadius=60,
-    )
+    margin_x, margin_y = 150, 100
 
     best_candidate = None
     best_score = -1e9
 
-    if circles is not None and len(circles[0]) > 0:
-        for c in circles[0]:
-            cx, cy, r = float(c[0]), float(c[1]), float(c[2])
-            if not (margin <= cx <= w - margin and margin <= cy <= h - margin):
-                continue
-
-            # Mät genomsnittlig ljusstyrka inuti cirkeln
-            inner_mask = ((x_coords - cx) ** 2 + (y_coords - cy) ** 2) <= (r * 0.8) ** 2
-            mean_intensity = float(np.mean(gray[inner_mask])) if np.any(inner_mask) else 0.0
-            dist_to_center = np.hypot(cx - cx_nom, cy - cy_nom)
-
-            # Poängsätt: hög ljusstyrka + närhet till bildens mitt
-            score = mean_intensity * 1.5 - (dist_to_center * 0.25)
-            if score > best_score:
-                best_score = score
-                best_candidate = (cx, cy, r)
-
-        if best_candidate is not None and best_candidate[2] >= 24.0:
-            return best_candidate
-
-    # Metod 2 (Fallback): Ljushetströskling och rundhetsanalys
-    for percentile in [95, 90, 85]:
-        thresh_val = int(np.percentile(blur[margin:-margin, margin:-margin], percentile))
-        _, thresh = cv2.threshold(blur, thresh_val, 255, cv2.THRESH_BINARY)
-        thresh[:margin, :] = 0; thresh[-margin:, :] = 0
-        thresh[:, :margin] = 0; thresh[:, -margin:] = 0
+    # Tröskel-sweep kring bollens kantintensitet mot bädden
+    for th_val in range(165, 186, 2):
+        _, thresh = cv2.threshold(blur, th_val, 255, cv2.THRESH_BINARY)
+        # Nollställ ytterkanter (bordskanter / bakgrund)
+        thresh[:margin_y, :] = 0; thresh[-margin_y:, :] = 0
+        thresh[:, :margin_x] = 0; thresh[:, -margin_x:] = 0
 
         cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in cnts:
             area = cv2.contourArea(c)
-            if area < np.pi * (20 ** 2):
+            if not (2500 <= area <= 6500):
                 continue
             perimeter = cv2.arcLength(c, True)
             if perimeter == 0:
@@ -123,16 +89,17 @@ def find_sphere_circle(
             (cx, cy), radius = cv2.minEnclosingCircle(c)
             dist_to_center = np.hypot(cx - cx_nom, cy - cy_nom)
 
-            if 22.0 <= radius <= 60.0 and circ > 0.60:
-                score = circ * 200.0 - (dist_to_center * 0.2)
+            if 34.0 <= radius <= 46.0 and circ > 0.55:
+                # Hög cirkularitet och radie nära 40 px premieras
+                r_diff = abs(radius - BALL_RADIUS_PX)
+                score = (circ * 100.0) - (r_diff * 5.0) - (dist_to_center * 0.05)
                 if score > best_score:
                     best_score = score
-                    best_candidate = (float(cx), float(cy), float(radius))
+                    # Använd nominell BALL_RADIUS_PX om detekterad radie är nära
+                    final_r = BALL_RADIUS_PX if 36.0 <= radius <= 44.0 else float(radius)
+                    best_candidate = (float(cx), float(cy), final_r)
 
-        if best_candidate is not None:
-            return best_candidate
-
-    return None
+    return best_candidate
 
 
 def compute_light_vectors_for_camera(
