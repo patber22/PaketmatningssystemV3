@@ -30,7 +30,7 @@ from src.algorithms.stereo_depth import StereoDepthEstimator
 # ==============================================================================
 # Konfiguration
 # ==============================================================================
-MIN_HEIGHT_MM = 15.0     # Minsta höjd över bordet (mm) för att räknas som paket
+MIN_HEIGHT_MM = 10.0     # Minsta höjd över bordet (mm) för att räknas som paket
 MAX_HEIGHT_MM = 350.0    # Max tillåten pakethöjd (mm)
 BORDER_MARGIN_PX = 80    # Ignorera bildens yttersta pixlar (eliminerar SGBM kantbrus)
 MIN_CONTOUR_AREA_PX = 1500  # Minsta pixelarea för att betraktas som paket
@@ -158,7 +158,7 @@ def main():
     clean_binary[m:h-m, m:w-m] = raw_binary[m:h-m, m:w-m].astype(np.uint8) * 255
 
     # D. Morfologisk öppning: Tar bort små brusöar och ocklusionsskuggor
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     clean_binary = cv2.morphologyEx(clean_binary, cv2.MORPH_OPEN, kernel)
     clean_binary = cv2.morphologyEx(clean_binary, cv2.MORPH_CLOSE, kernel)
 
@@ -167,7 +167,7 @@ def main():
     valid_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= MIN_CONTOUR_AREA_PX]
 
     if not valid_contours:
-        print("\n[INFO] Inget paket detekterades på bordet (> 15 mm).")
+        print(f"\n[INFO] Inget paket detekterades på bordet (> {MIN_HEIGHT_MM:.0f} mm).")
         print("Bordet är helt rent och isolerat!")
         return
 
@@ -189,18 +189,10 @@ def main():
     # Höjd (H): 99:e percentilen för att undvika enstaka brusspikar
     height_mm = float(np.percentile(pkg_heights, 99.0))
 
-    # Längd och Bredd (L x B): 2D oriented bounding box på X/Y
+    # Längd och Bredd (L x B): Beräknas via konvext hölje och minAreaRect i mm
     pts_2d = pkg_points_3d[:, :2].astype(np.float32)
-    # Rensa bort 2% yttersta punkter innan rektangelpassning
-    x_min, x_max = np.percentile(pts_2d[:, 0], [2.0, 98.0])
-    y_min, y_max = np.percentile(pts_2d[:, 1], [2.0, 98.0])
-    inliers_mask = (
-        (pts_2d[:, 0] >= x_min) & (pts_2d[:, 0] <= x_max) &
-        (pts_2d[:, 1] >= y_min) & (pts_2d[:, 1] <= y_max)
-    )
-    inlier_pts_2d = pts_2d[inliers_mask]
-
-    rect = cv2.minAreaRect(inlier_pts_2d)
+    hull = cv2.convexHull(pts_2d)
+    rect = cv2.minAreaRect(hull)
     _, (dim1, dim2), angle = rect
     length_mm = max(dim1, dim2)
     width_mm = min(dim1, dim2)
@@ -223,10 +215,15 @@ def main():
     cv2.drawContours(height_color, [package_contour], -1, (255, 255, 255), 2)
     cv2.imwrite(str(OUTPUT_DIR / "quick_height_map.jpg"), height_color)
 
-    # 3. Kamerabild med grön paketkontur
+    # 3. Kamerabild med grön paketkontur och röd bounding box
     rect_left = depth_res.rectified_left.copy() if depth_res.rectified_left is not None else None
     if rect_left is not None:
-        cv2.drawContours(rect_left, [package_contour], -1, (0, 255, 0), 3)
+        # Grön linje: verklig segmenterad kontur
+        cv2.drawContours(rect_left, [package_contour], -1, (0, 255, 0), 2)
+        # Röd linje: anpassad 2D bounding box
+        box_2d = cv2.minAreaRect(package_contour)
+        box_pts = cv2.boxPoints(box_2d).astype(np.int32)
+        cv2.drawContours(rect_left, [box_pts], -1, (0, 0, 255), 2)
         cv2.imwrite(str(OUTPUT_DIR / "quick_detection_overlay.jpg"), rect_left)
 
     print("\n" + "=" * 70)
