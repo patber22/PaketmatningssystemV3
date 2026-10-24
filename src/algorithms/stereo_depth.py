@@ -205,15 +205,27 @@ class StereoDepthEstimator:
 
         try:
             # 3. Rektifiera
+            t_rect_start = time.perf_counter()
             rect_l, rect_r = self._rectify(img_l, img_r)
+            t_rect_ms = (time.perf_counter() - t_rect_start) * 1000.0
 
             # 4. Beräkna disparitet
+            t_disp_start = time.perf_counter()
             disp = self._compute_disparity(rect_l, rect_r)
+            t_disp_ms = (time.perf_counter() - t_disp_start) * 1000.0
 
             # 5. Reprojicera till metriskt punktmoln (mm)
+            t_3d_start = time.perf_counter()
             point_cloud = self._reproject_to_3d(disp)
+            t_3d_ms = (time.perf_counter() - t_3d_start) * 1000.0
 
             exec_time_ms = (time.perf_counter() - t0) * 1000.0
+
+            if self.verbose:
+                print(
+                    f"[StereoDepthEstimator] Klar på {exec_time_ms:.1f} ms "
+                    f"(rectify: {t_rect_ms:.1f} ms, disparity: {t_disp_ms:.1f} ms, 3d: {t_3d_ms:.1f} ms)"
+                )
 
             return StereoDepthResult(
                 disparity=disp,
