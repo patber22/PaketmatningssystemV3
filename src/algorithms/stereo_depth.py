@@ -37,8 +37,8 @@ class StereoDepthEstimator:
 
     def __init__(
         self,
-        min_disparity: int = 64,
-        num_disparities: int = 192,
+        min_disparity: int = 128,
+        num_disparities: int = 128,
         block_size: int = 5,
         mode: str = "fast",
         uniqueness_ratio: int = 10,
@@ -51,8 +51,8 @@ class StereoDepthEstimator:
         Initierar StereoDepthEstimator och förberäknar rektifieringstabeller.
 
         Args:
-            min_disparity: Minsta disparitet att söka (t.ex. 64 för att spara beräkning mot oändligheten).
-            num_disparities: Antal disparitetssteg att söka (måste vara delbart med 16).
+            min_disparity: Minsta disparitet att söka (128 motsvarar ca 700 mm djup, strax under bordet).
+            num_disparities: Antal disparitetssteg (128 steg täcker ner till ca 350 mm, dvs 220 mm höga paket).
             block_size: Matchningsblockets storlek i pixlar (udda tal, t.ex. 3, 5 eller 7).
             mode: Beräkningsläge ('fast' för 3-vägs SGBM eller 'precise' för 8-vägs HH).
             uniqueness_ratio: Tröskelvärde för unikhet i matchning (i procent, standard 10).
