@@ -7,5 +7,6 @@ och sensorfusion (DimensionFuser).
 """
 
 from src.algorithms.stereo_depth import StereoDepthEstimator
+from src.algorithms.photometric_stereo import PhotometricStereoEstimator
 
-__all__ = ["StereoDepthEstimator"]
+__all__ = ["StereoDepthEstimator", "PhotometricStereoEstimator"]

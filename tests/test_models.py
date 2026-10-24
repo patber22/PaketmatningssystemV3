@@ -18,6 +18,7 @@ from src.core.models import (
     PhotometricSweep,
     VisionCapture,
     StereoDepthResult,
+    PhotometricResult,
 )
 import numpy as np
 import cv2
@@ -729,6 +730,80 @@ class TestStereoDepthResult(unittest.TestCase):
         """Verifiera __str__ representation."""
         res = StereoDepthResult.invalid()
         self.assertIn("StereoDepthResult", str(res))
+
+
+class TestPhotometricResult(unittest.TestCase):
+    """Testsvit för PhotometricResult dataklassen."""
+
+    def test_default_values(self):
+        """Verifiera standardvärden vid tom initiering."""
+        res = PhotometricResult()
+        self.assertFalse(res.is_valid())
+        self.assertIsNone(res.normals)
+        self.assertIsNone(res.albedo)
+        self.assertEqual(res.camera_id, "")
+        self.assertEqual(res.execution_time_ms, 0.0)
+
+    def test_invalid_factory(self):
+        """Verifiera PhotometricResult.invalid() fabriken."""
+        inv = PhotometricResult.invalid()
+        self.assertFalse(inv.is_valid())
+        data = inv.to_dict()
+        self.assertFalse(data["is_valid"])
+
+    def test_valid_operations(self):
+        """Verifiera maskning, metadata och serialisering på giltigt resultat."""
+        h, w = 10, 10
+        normals = np.zeros((h, w, 3), dtype=np.float32)
+        normals[:, :, 2] = 1.0  # Pekar rakt upp
+        albedo = np.full((h, w), 0.8, dtype=np.float32)
+        albedo[:2, :] = 0.0     # 2 rader ogiltiga
+
+        res = PhotometricResult(
+            normals=normals,
+            albedo=albedo,
+            camera_id="left_cam1",
+            timestamp=123.0,
+            execution_time_ms=14.5,
+            _is_valid=True,
+        )
+
+        self.assertTrue(res.is_valid())
+        mask = res.get_valid_mask()
+        self.assertEqual(np.count_nonzero(mask), 80)
+
+        d = res.to_dict()
+        self.assertTrue(d["is_valid"])
+        self.assertEqual(d["camera_id"], "left_cam1")
+        self.assertEqual(d["valid_pixels_count"], 80)
+        self.assertEqual(d["valid_pixels_percent"], 80.0)
+        self.assertEqual(d["albedo_stats"]["mean"], 0.8)
+
+    def test_to_jpeg(self):
+        """Verifiera export av normalkarta (RGB) och albedo."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            normals = np.zeros((10, 10, 3), dtype=np.float32)
+            normals[:, :, 2] = 1.0
+            albedo = np.full((10, 10), 0.5, dtype=np.float32)
+
+            res = PhotometricResult(
+                normals=normals,
+                albedo=albedo,
+                camera_id="left_cam1",
+                _is_valid=True,
+            )
+
+            saved = res.to_jpeg(tmp_path)
+            self.assertIsNotNone(saved["normals_rgb"])
+            self.assertIsNotNone(saved["albedo"])
+            self.assertTrue(saved["normals_rgb"].exists())
+            self.assertTrue(saved["albedo"].exists())
+
+    def test_str_representation(self):
+        """Verifiera __str__ representation."""
+        res = PhotometricResult.invalid()
+        self.assertIn("PhotometricResult", str(res))
 
 
 if __name__ == "__main__":

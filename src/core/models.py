@@ -722,6 +722,133 @@ class StereoDepthResult:
         return f"StereoDepthResult: {self.to_dict()}"
 
 
+@dataclass
+class PhotometricResult:
+    """
+    Representerar resultatet från fotometrisk stereoberäkning (PhotometricStereoEstimator).
+
+    Innehåller ytnormaler N = (nx, ny, nz), albedokarta rho samt ytlutningar (p, q).
+    """
+    normals: Optional[np.ndarray] = None          # (H, W, 3) float32 ytnormaler (enhetsvektorer)
+    albedo: Optional[np.ndarray] = None           # (H, W) float32 ytreflektans [0.0 .. 1.0]
+    p_gradient: Optional[np.ndarray] = None       # (H, W) float32 derivata dZ/dx = -nx/nz
+    q_gradient: Optional[np.ndarray] = None       # (H, W) float32 derivata dZ/dy = -ny/nz
+    camera_id: str = ""                           # "left_cam1" eller "right_cam0"
+    timestamp: float = 0.0                        # UNIX-tidsstämpel i sekunder
+    execution_time_ms: float = 0.0                # Beräkningstid i millisekunder
+    _is_valid: bool = False
+
+    def is_valid(self) -> bool:
+        """True om normaler och albedo finns i minnet och beräkningen lyckades."""
+        if not self._is_valid or self.normals is None or self.albedo is None:
+            return False
+        return bool(self.normals.size > 0 and self.albedo.size > 0)
+
+    @classmethod
+    def invalid(cls) -> "PhotometricResult":
+        """Null Object Pattern: Skapar ett standardiserat ogiltigt fotometriskt resultat."""
+        return cls(
+            normals=None,
+            albedo=None,
+            p_gradient=None,
+            q_gradient=None,
+            camera_id="",
+            timestamp=time.time(),
+            execution_time_ms=0.0,
+            _is_valid=False,
+        )
+
+    def get_valid_mask(self) -> np.ndarray:
+        """
+        Returnerar en boolesk 2D-mask (H, W) där True indikerar giltig normal och albedo.
+        """
+        if self.albedo is None:
+            return np.zeros((0, 0), dtype=bool)
+        return (self.albedo > 0.0) & np.isfinite(self.albedo)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Serialiserar beräkningsmetadata för loggar och export.
+        Utesluter tunga matriser men sparar täckning och albedostatistik.
+        """
+        if not self.is_valid():
+            return {
+                "is_valid": False,
+                "camera_id": self.camera_id,
+                "timestamp": self.timestamp,
+                "execution_time_ms": round(self.execution_time_ms, 2),
+            }
+
+        valid_mask = self.get_valid_mask()
+        total_pixels = valid_mask.size
+        valid_count = int(np.count_nonzero(valid_mask))
+        valid_percent = round((valid_count / total_pixels) * 100.0, 2) if total_pixels > 0 else 0.0
+
+        albedo_stats = {"min": 0.0, "max": 0.0, "mean": 0.0}
+        if valid_count > 0 and self.albedo is not None:
+            val = self.albedo[valid_mask]
+            albedo_stats = {
+                "min": round(float(np.min(val)), 3),
+                "max": round(float(np.max(val)), 3),
+                "mean": round(float(np.mean(val)), 3),
+            }
+
+        h, w = self.albedo.shape[:2] if self.albedo is not None else (0, 0)
+
+        return {
+            "is_valid": True,
+            "camera_id": self.camera_id,
+            "timestamp": self.timestamp,
+            "execution_time_ms": round(self.execution_time_ms, 2),
+            "resolution": [w, h],
+            "valid_pixels_count": valid_count,
+            "valid_pixels_percent": valid_percent,
+            "albedo_stats": albedo_stats,
+            "has_gradients": self.p_gradient is not None and self.q_gradient is not None,
+        }
+
+    def to_jpeg(
+        self,
+        path: Union[str, Path] = Path("."),
+        prefix: str = "photometric_"
+    ) -> Dict[str, Optional[Path]]:
+        """
+        Sparar färgkodad normalkarta (RGB) och albedobild för visuell inspektion.
+        Normaler mappas enligt standard: R=(nx*0.5+0.5)*255, G=(ny*0.5+0.5)*255, B=(nz*0.5+0.5)*255.
+        """
+        target_dir = Path(path)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        results: Dict[str, Optional[Path]] = {"normals_rgb": None, "albedo": None}
+
+        # 1. Normalkarta i RGB (BGR för OpenCV)
+        if self.normals is not None and self.normals.size > 0:
+            valid_mask = self.get_valid_mask()
+            # Mappa [-1, 1] till [0, 255]
+            norm_vis = (self.normals * 0.5 + 0.5) * 255.0
+            norm_bgr = np.clip(norm_vis, 0, 255).astype(np.uint8)
+            # OpenCV BGR: B=Z, G=Y, R=X
+            norm_bgr = norm_bgr[:, :, [2, 1, 0]]
+            norm_bgr[~valid_mask] = (0, 0, 0)
+
+            norm_path = target_dir / f"{prefix}normals_rgb.jpg"
+            cv2.imwrite(str(norm_path), norm_bgr)
+            results["normals_rgb"] = norm_path
+
+        # 2. Albedokarta (skuggfri gråskalebild)
+        if self.albedo is not None and self.albedo.size > 0:
+            albedo_scaled = np.clip(self.albedo * 255.0, 0, 255).astype(np.uint8)
+            albedo_path = target_dir / f"{prefix}albedo.jpg"
+            cv2.imwrite(str(albedo_path), albedo_scaled)
+            results["albedo"] = albedo_path
+
+        return results
+
+    def __str__(self) -> str:
+        """Kompakt strängrepresentation baserad på to_dict()."""
+        return f"PhotometricResult: {self.to_dict()}"
+
+
+
 
 
 
