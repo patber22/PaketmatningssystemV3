@@ -169,6 +169,106 @@ class TestPhotometricStereoEstimator(unittest.TestCase):
         self.assertGreater(info["valid_pixels_count"], 1000000)
         self.assertGreater(info["albedo_stats"]["mean"], 0.1)
 
+    def test_outlier_rejection_init_params(self):
+        """Verifiera default- och anpassade parametrar för outlier rejection."""
+        est_default = PhotometricStereoEstimator(camera_id="left_cam1", verbose=False)
+        self.assertTrue(est_default.enable_outlier_rejection)
+        self.assertAlmostEqual(est_default.saturation_threshold, 0.90)
+        self.assertAlmostEqual(est_default.shadow_threshold, 0.02)
+        self.assertEqual(est_default._triplet_pinvs.shape, (4, 3, 3))
+
+        est_custom = PhotometricStereoEstimator(
+            camera_id="left_cam1",
+            enable_outlier_rejection=False,
+            saturation_threshold=0.85,
+            shadow_threshold=0.05,
+            verbose=False,
+        )
+        self.assertFalse(est_custom.enable_outlier_rejection)
+        self.assertAlmostEqual(est_custom.saturation_threshold, 0.85)
+        self.assertAlmostEqual(est_custom.shadow_threshold, 0.05)
+
+    def test_outlier_rejection_specular(self):
+        """Verifiera att 4-source outlier rejection eliminerar spegelblänk och återskapar sann normal."""
+        n_true = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        albedo_true = 0.5
+        g_true = n_true * albedo_true
+
+        # Diffusa intensiteter för normal [0, 0, 1]
+        I_clean = self.estimator.L @ g_true  # (4,)
+
+        # Skapa bild med ett spegelblänk i kanal 2 (index 1)
+        h, w = 10, 10
+        I = np.zeros((h, w, 4), dtype=np.float32)
+        I[:, :] = I_clean
+        I[:, :, 1] = 0.98  # Kraftig mättnad / spegelblänk
+
+        # Med outlier rejection (standard)
+        est_with = PhotometricStereoEstimator(camera_id="left_cam1", enable_outlier_rejection=True, verbose=False)
+        normals_with, albedo_with, valid_with = est_with._compute_normals_and_albedo(I)
+
+        # Utan outlier rejection
+        est_without = PhotometricStereoEstimator(camera_id="left_cam1", enable_outlier_rejection=False, verbose=False)
+        normals_without, albedo_without, valid_without = est_without._compute_normals_and_albedo(I)
+
+        # Verifiera att modellen med outlier rejection återskapar sann normal [0, 0, 1]
+        self.assertTrue(np.all(valid_with))
+        np.testing.assert_allclose(normals_with[:, :, 2], 1.0, atol=1e-3)
+        np.testing.assert_allclose(normals_with[:, :, 0], 0.0, atol=1e-3)
+        np.testing.assert_allclose(normals_with[:, :, 1], 0.0, atol=1e-3)
+        np.testing.assert_allclose(albedo_with, albedo_true, atol=1e-3)
+
+        # Verifiera att modellen UTAN outlier rejection blir kraftigt felvinklad (nz sjunker markant)
+        self.assertLess(normals_without[0, 0, 2], 0.60)
+
+    def test_outlier_rejection_shadow(self):
+        """Verifiera att 4-source outlier rejection hanterar enstaka skuggad lampa."""
+        n_true = np.array([0.2, 0.0, 0.9797959], dtype=np.float32)
+        albedo_true = 0.5
+        g_true = n_true * albedo_true
+
+        I_clean = self.estimator.L @ g_true
+
+        # Skapa bild där lampa 3 (index 2) är skuggad (nära noll)
+        h, w = 10, 10
+        I = np.zeros((h, w, 4), dtype=np.float32)
+        I[:, :] = I_clean
+        I[:, :, 2] = 0.005  # Skuggad lampa
+
+        est_with = PhotometricStereoEstimator(camera_id="left_cam1", enable_outlier_rejection=True, verbose=False)
+        normals_with, albedo_with, valid_with = est_with._compute_normals_and_albedo(I)
+
+        est_without = PhotometricStereoEstimator(camera_id="left_cam1", enable_outlier_rejection=False, verbose=False)
+        normals_without, albedo_without, valid_without = est_without._compute_normals_and_albedo(I)
+
+        # Verifiera att sann normal återskapas
+        self.assertTrue(np.all(valid_with))
+        np.testing.assert_allclose(normals_with[:, :, 0], n_true[0], atol=1e-2)
+        np.testing.assert_allclose(normals_with[:, :, 1], n_true[1], atol=1e-2)
+        np.testing.assert_allclose(normals_with[:, :, 2], n_true[2], atol=1e-2)
+
+        # Verifiera att modellen utan rejection får enormt fel
+        self.assertLess(normals_without[0, 0, 2], 0.30)
+
+    def test_outlier_rejection_identical_on_diffuse(self):
+        """Verifiera att outlier rejection inte påverkar rena diffusa ytor."""
+        n_true = np.array([0.1, -0.1, 0.9899495], dtype=np.float32)
+        g_true = n_true * 0.45
+        I_clean = self.estimator.L @ g_true
+
+        h, w = 10, 10
+        I = np.zeros((h, w, 4), dtype=np.float32)
+        I[:, :] = I_clean
+
+        est_with = PhotometricStereoEstimator(camera_id="left_cam1", enable_outlier_rejection=True, verbose=False)
+        normals_with, albedo_with, _ = est_with._compute_normals_and_albedo(I)
+
+        est_without = PhotometricStereoEstimator(camera_id="left_cam1", enable_outlier_rejection=False, verbose=False)
+        normals_without, albedo_without, _ = est_without._compute_normals_and_albedo(I)
+
+        np.testing.assert_allclose(normals_with, normals_without, atol=1e-6)
+        np.testing.assert_allclose(albedo_with, albedo_without, atol=1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

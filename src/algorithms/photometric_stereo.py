@@ -37,6 +37,9 @@ class PhotometricStereoEstimator:
         self,
         camera_id: str = "left_cam1",
         min_albedo: float = 0.03,
+        enable_outlier_rejection: bool = True,
+        saturation_threshold: float = 0.90,
+        shadow_threshold: float = 0.02,
         verbose: bool = True,
     ):
         """
@@ -45,11 +48,17 @@ class PhotometricStereoEstimator:
         Args:
             camera_id: 'left_cam1' (primär) eller 'right_cam0'.
             min_albedo: Tröskelvärde för albedo under vilket normaler betraktas som ogiltiga/skugga.
+            enable_outlier_rejection: Om True aktiveras 4-source outlier rejection mot spegelblänk och skuggor.
+            saturation_threshold: Intensitetsnivå [0..1] för att flagga spegelblänk (standard 0.90, ca 230/255).
+            shadow_threshold: Intensitetsnivå [0..1] för att flagga enstaka skuggad lampa (standard 0.02, ca 5/255).
             verbose: Om True loggas mikrotider och eventuella varningar vid körning.
         """
         self.verbose = verbose
         self.camera_id = camera_id.lower()
         self.min_albedo = float(min_albedo)
+        self.enable_outlier_rejection = bool(enable_outlier_rejection)
+        self.saturation_threshold = float(saturation_threshold)
+        self.shadow_threshold = float(shadow_threshold)
 
         if self.camera_id not in SUPPORTED_CAMERAS:
             raise ValueError(
@@ -80,6 +89,22 @@ class PhotometricStereoEstimator:
         # 3. Förberäkna Moore-Penrose pseudoinvers: L_pinv = (L^T * L)^-1 * L^T
         self.L_pinv = np.linalg.pinv(self.L).astype(np.float32)  # (3, 4)
 
+        # 4. Förberäkna 3-ljus tripletter för outlier rejection (triplett k utesluter lampa k)
+        # Triplett 0: lampor (1, 2, 3)
+        # Triplett 1: lampor (0, 2, 3)
+        # Triplett 2: lampor (0, 1, 3)
+        # Triplett 3: lampor (0, 1, 2)
+        self._triplet_indices = [
+            np.array([1, 2, 3], dtype=np.int32),
+            np.array([0, 2, 3], dtype=np.int32),
+            np.array([0, 1, 3], dtype=np.int32),
+            np.array([0, 1, 2], dtype=np.int32),
+        ]
+        self._triplet_pinvs = np.stack(
+            [np.linalg.pinv(self.L[self._triplet_indices[k]]).astype(np.float32) for k in range(4)],
+            axis=0,
+        )  # (4, 3, 3)
+
     def _prepare_intensities(self, sweep: PhotometricSweep) -> np.ndarray:
         """
         Extraherar de 4 bildkanalerna för den valda kameran och staplar till (H, W, 4) float32 [0..1].
@@ -106,6 +131,53 @@ class PhotometricStereoEstimator:
         # Stapla till en (H, W, 4) matris
         return np.stack(images, axis=-1)
 
+    def _reject_outliers(self, I: np.ndarray, g: np.ndarray) -> np.ndarray:
+        """
+        Identifierar och ersätter estimat för pixlar med spegelblänk (mättnad)
+        eller enstaka skuggade lampor genom att lösa med bästa 3-ljus-triplett.
+        """
+        # 1. Spegelblänk / mättnad: Minst en kanal >= saturation_threshold
+        sat_mask = np.any(I >= self.saturation_threshold, axis=-1)
+
+        # 2. Enstaka skuggade lampor: Minst en kanal <= shadow_threshold,
+        # men pixeln är tillräckligt belyst totalt (max(I) >= min_albedo * 2)
+        shadow_mask = (
+            np.any(I <= self.shadow_threshold, axis=-1)
+            & (np.max(I, axis=-1) >= 0.15)
+            & (~sat_mask)
+        )
+
+        if not np.any(sat_mask) and not np.any(shadow_mask):
+            return g
+
+        g_out = g.copy()
+
+        # A. Åtgärda spegelblänk (uteslut kanalen med högst intensitet)
+        if np.any(sat_mask):
+            sat_I = I[sat_mask]
+            worst_sat = np.argmax(sat_I, axis=-1)
+            g_sat = np.empty((sat_I.shape[0], 3), dtype=np.float32)
+            for k in range(4):
+                k_sel = (worst_sat == k)
+                if np.any(k_sel):
+                    I_sub = sat_I[k_sel][:, self._triplet_indices[k]]
+                    g_sat[k_sel] = I_sub @ self._triplet_pinvs[k].T
+            g_out[sat_mask] = g_sat
+
+        # B. Åtgärda enstaka skuggor (uteslut kanalen med lägst intensitet)
+        if np.any(shadow_mask):
+            shd_I = I[shadow_mask]
+            worst_shd = np.argmin(shd_I, axis=-1)
+            g_shd = np.empty((shd_I.shape[0], 3), dtype=np.float32)
+            for k in range(4):
+                k_sel = (worst_shd == k)
+                if np.any(k_sel):
+                    I_sub = shd_I[k_sel][:, self._triplet_indices[k]]
+                    g_shd[k_sel] = I_sub @ self._triplet_pinvs[k].T
+            g_out[shadow_mask] = g_shd
+
+        return g_out
+
     def _compute_normals_and_albedo(
         self, I: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -118,6 +190,10 @@ class PhotometricStereoEstimator:
         # Tensor-multiplikation: g(y, x, :) = L_pinv (3, 4) @ I(y, x, :) (4,)
         # Resulterande g har form (H, W, 3)
         g = np.tensordot(I, self.L_pinv, axes=([2], [1])).astype(np.float32)
+
+        # 4-source outlier rejection (spegelblänk och skuggor)
+        if self.enable_outlier_rejection:
+            g = self._reject_outliers(I, g)
 
         # Albedo rho = ||g||
         albedo = np.linalg.norm(g, axis=2).astype(np.float32)
