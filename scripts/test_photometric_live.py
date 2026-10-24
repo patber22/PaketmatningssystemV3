@@ -73,6 +73,19 @@ def main():
     # ==============================================================================
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # 0. Spara råa svepbilder för CAM1 och CAM0 för noggrann inspektion
+    raw_saved = []
+    channels = [sweep.ch1, sweep.ch2, sweep.ch3, sweep.ch4]
+    for ch_idx, pair in enumerate(channels, start=1):
+        if pair.left and pair.left.image is not None:
+            p_l = OUTPUT_DIR / f"raw_ch{ch_idx}_CAM1.jpg"
+            cv2.imwrite(str(p_l), pair.left.image)
+            raw_saved.append(p_l.name)
+        if pair.right and pair.right.image is not None:
+            p_r = OUTPUT_DIR / f"raw_ch{ch_idx}_CAM0.jpg"
+            cv2.imwrite(str(p_r), pair.right.image)
+            raw_saved.append(p_r.name)
+
     # 1. Standard RGB-normalkarta och Albedobild
     saved = result.to_jpeg(OUTPUT_DIR, prefix="photo_")
 
@@ -109,6 +122,7 @@ def main():
     print(f"    1. 3D-normalkarta (RGB): {saved['normals_rgb']}")
     print(f"    2. Skuggfri Albedo:      {saved['albedo']}")
     print(f"    3. Ytlutningskarta:      {slope_path}")
+    print(f"    4. Råa bildkanaler:      {len(raw_saved)} sparade i {OUTPUT_DIR}")
     print("=" * 70 + "\n")
 
 

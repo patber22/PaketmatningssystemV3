@@ -39,7 +39,6 @@ class PhotometricStereoEstimator:
         min_albedo: float = 0.03,
         enable_outlier_rejection: bool = True,
         saturation_threshold: float = 0.90,
-        shadow_threshold: float = 0.02,
         verbose: bool = True,
     ):
         """
@@ -48,9 +47,8 @@ class PhotometricStereoEstimator:
         Args:
             camera_id: 'left_cam1' (primär) eller 'right_cam0'.
             min_albedo: Tröskelvärde för albedo under vilket normaler betraktas som ogiltiga/skugga.
-            enable_outlier_rejection: Om True aktiveras 4-source outlier rejection mot spegelblänk och skuggor.
+            enable_outlier_rejection: Om True aktiveras 4-source outlier rejection mot spegelblänk.
             saturation_threshold: Intensitetsnivå [0..1] för att flagga spegelblänk (standard 0.90, ca 230/255).
-            shadow_threshold: Intensitetsnivå [0..1] för att flagga enstaka skuggad lampa (standard 0.02, ca 5/255).
             verbose: Om True loggas mikrotider och eventuella varningar vid körning.
         """
         self.verbose = verbose
@@ -58,7 +56,6 @@ class PhotometricStereoEstimator:
         self.min_albedo = float(min_albedo)
         self.enable_outlier_rejection = bool(enable_outlier_rejection)
         self.saturation_threshold = float(saturation_threshold)
-        self.shadow_threshold = float(shadow_threshold)
 
         if self.camera_id not in SUPPORTED_CAMERAS:
             raise ValueError(
@@ -133,49 +130,32 @@ class PhotometricStereoEstimator:
 
     def _reject_outliers(self, I: np.ndarray, g: np.ndarray) -> np.ndarray:
         """
-        Identifierar och ersätter estimat för pixlar med spegelblänk (mättnad)
-        eller enstaka skuggade lampor genom att lösa med bästa 3-ljus-triplett.
+        Identifierar och ersätter estimat för pixlar med EXAKT EN mättad lampa (spegelblänk).
+        Om 2 eller fler lampor är mättade behålls standard 4-ljuslösningen (eftersom minst 3
+        rena lampor krävs för en deterministisk 3-ljuslösning; pixelhantering sker då via fusion).
         """
-        # 1. Spegelblänk / mättnad: Minst en kanal >= saturation_threshold
-        sat_mask = np.any(I >= self.saturation_threshold, axis=-1)
+        # Räkna mättade kanaler per pixel
+        sat_counts = np.sum(I >= self.saturation_threshold, axis=-1)
 
-        # 2. Enstaka skuggade lampor: Minst en kanal <= shadow_threshold,
-        # men pixeln är tillräckligt belyst totalt (max(I) >= min_albedo * 2)
-        shadow_mask = (
-            np.any(I <= self.shadow_threshold, axis=-1)
-            & (np.max(I, axis=-1) >= 0.15)
-            & (~sat_mask)
-        )
+        # Aktivera endast där EXAKT 1 kanal är mättad
+        single_sat = (sat_counts == 1)
 
-        if not np.any(sat_mask) and not np.any(shadow_mask):
+        if not np.any(single_sat):
             return g
 
         g_out = g.copy()
 
-        # A. Åtgärda spegelblänk (uteslut kanalen med högst intensitet)
-        if np.any(sat_mask):
-            sat_I = I[sat_mask]
-            worst_sat = np.argmax(sat_I, axis=-1)
-            g_sat = np.empty((sat_I.shape[0], 3), dtype=np.float32)
-            for k in range(4):
-                k_sel = (worst_sat == k)
-                if np.any(k_sel):
-                    I_sub = sat_I[k_sel][:, self._triplet_indices[k]]
-                    g_sat[k_sel] = I_sub @ self._triplet_pinvs[k].T
-            g_out[sat_mask] = g_sat
+        sat_I = I[single_sat]
+        worst_sat = np.argmax(sat_I, axis=-1)
+        g_sat = np.empty((sat_I.shape[0], 3), dtype=np.float32)
 
-        # B. Åtgärda enstaka skuggor (uteslut kanalen med lägst intensitet)
-        if np.any(shadow_mask):
-            shd_I = I[shadow_mask]
-            worst_shd = np.argmin(shd_I, axis=-1)
-            g_shd = np.empty((shd_I.shape[0], 3), dtype=np.float32)
-            for k in range(4):
-                k_sel = (worst_shd == k)
-                if np.any(k_sel):
-                    I_sub = shd_I[k_sel][:, self._triplet_indices[k]]
-                    g_shd[k_sel] = I_sub @ self._triplet_pinvs[k].T
-            g_out[shadow_mask] = g_shd
+        for k in range(4):
+            k_sel = (worst_sat == k)
+            if np.any(k_sel):
+                I_sub = sat_I[k_sel][:, self._triplet_indices[k]]
+                g_sat[k_sel] = I_sub @ self._triplet_pinvs[k].T
 
+        g_out[single_sat] = g_sat
         return g_out
 
     def _compute_normals_and_albedo(
