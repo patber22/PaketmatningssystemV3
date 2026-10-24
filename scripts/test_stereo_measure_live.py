@@ -22,7 +22,7 @@ from src.algorithms.stereo_depth import StereoDepthEstimator
 # ==============================================================================
 # Konfiguration (Ändra dessa värden direkt här vid behov)
 # ==============================================================================
-BED_Z_MM = 894.0         # Ändra till ditt uppmätta bordsavstånd (ToF) i millimeter
+BED_Z_MM = 569.0         # Ändra till ditt uppmätta bordsavstånd (ToF) i millimeter
 MIN_HEIGHT_MM = 15.0     # Minsta höjd över bordet (mm) för att räknas som paket
 MAX_HEIGHT_MM = 400.0    # Max tillåten pakethöjd (mm)
 OUTPUT_DIR = PROJECT_ROOT / "data" / "test_output" / "quick_measure"
