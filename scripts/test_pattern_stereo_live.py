@@ -140,8 +140,8 @@ def main():
         return
 
     # Spara råbilder så användaren kan se hur mönstret ser ut
-    cv2.imwrite(str(OUTPUT_DIR / "raw_left_cam1.png"), pair.left.data)
-    cv2.imwrite(str(OUTPUT_DIR / "raw_right_cam0.png"), pair.right.data)
+    cv2.imwrite(str(OUTPUT_DIR / "raw_left_cam1.png"), pair.left.image)
+    cv2.imwrite(str(OUTPUT_DIR / "raw_right_cam0.png"), pair.right.image)
     print(f"  [Sparat] Råbild Vänster: {OUTPUT_DIR / 'raw_left_cam1.png'}")
     print(f"  [Sparat] Råbild Höger:   {OUTPUT_DIR / 'raw_right_cam0.png'}")
 
