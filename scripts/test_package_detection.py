@@ -113,10 +113,17 @@ def run_cdsm_pipeline(dataset_name: str) -> Dict[str, any]:
     bed_mask[180:1050, 260:1380] = 255
     mag_bed = cv2.bitwise_and(mag, bed_mask)
 
-    # 6. Adaptiv tröskling via Otsu (Steg 5)
-    th_otsu, _ = cv2.threshold(mag_bed[180:1050, 260:1380], 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    # Skala med 0.75 för att svälja halvskugga (penumbra) vid höga 3D-hörn (bordets brus är ~10)
-    th_shadow = int(th_otsu * 0.75)
+    # Spara magnitudo-bilden så man kan inspektera skuggfältet direkt före tröskling och fyllning
+    mag_out_path = OUTPUT_DIR / f"{dataset_name}_magnitude.jpg"
+    imwrite_unicode(mag_out_path, mag)
+
+    # 6. Adaptiv tröskling via klassbalanserad Otsu (Steg 5)
+    crop_bed = mag_bed[180:1050, 260:1380]
+    th_otsu, _ = cv2.threshold(crop_bed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Dynamisk skalfaktor baserad på skuggans andel: faktor = clip(0.5 + andel, 0.50, 0.80)
+    andel = float(np.mean(crop_bed > th_otsu))
+    scale_factor = float(np.clip(0.5 + andel, 0.50, 0.80))
+    th_shadow = max(int(round(th_otsu * scale_factor)), 25)
     binary_shadow = (mag_bed > th_shadow).astype(np.uint8) * 255
 
     # 7. Ö-isolering via inverterad flödesfyllning (Steg 6)
@@ -151,7 +158,7 @@ def run_cdsm_pipeline(dataset_name: str) -> Dict[str, any]:
     # Rita den exakta ytterkonturen med 1 px tunn grön linje för maximal pixelprecision
     cv2.drawContours(vis, [pkg_contour], -1, (0, 255, 0), thickness=1)
 
-    cv2.putText(vis, f"CDSM Mask [{dataset_name.upper()}] (th = {th_shadow}, Otsu = {th_otsu:.1f})", (30, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2, cv2.LINE_AA)
+    cv2.putText(vis, f"CDSM Mask [{dataset_name.upper()}] (th = {th_shadow}, Otsu = {th_otsu:.1f}, andel = {andel*100:.1f}%)", (30, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 0), 2, cv2.LINE_AA)
     cv2.putText(vis, f"Mask Area: {area_px:.0f} px | Konturpunkter: {len(pkg_contour)}", (30, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
 
     out_path = OUTPUT_DIR / f"{dataset_name}_cdsm_result.jpg"
@@ -161,8 +168,11 @@ def run_cdsm_pipeline(dataset_name: str) -> Dict[str, any]:
         "dataset": dataset_name,
         "shadow_threshold": th_shadow,
         "otsu_threshold": th_otsu,
+        "andel": andel,
+        "scale_factor": scale_factor,
         "area_px": area_px,
         "contour_points": len(pkg_contour),
+        "magnitude_path": mag_out_path,
         "output_path": out_path,
     }
 
@@ -186,10 +196,12 @@ def main():
         res = run_cdsm_pipeline(ds)
 
         print(f"  [OK] Mask isolerad!")
-        print(f"       Tröskel (0.75*Otsu): {res['shadow_threshold']} (Otsu var {res['otsu_threshold']:.1f})")
+        print(f"       Otsu-tröskel:        {res['otsu_threshold']:.1f} (Skugg-andel: {res['andel']*100:.1f}%)")
+        print(f"       Adaptiv tröskel:     {res['shadow_threshold']} (Faktor: {res['scale_factor']:.3f})")
         print(f"       Maskarea:            {res['area_px']:.0f} px")
         print(f"       Konturpunkter:       {res['contour_points']} st")
-        print(f"  [BILD] Sparad overlay: {res['output_path']}")
+        print(f"  [BILD] Sparad magnitude:  {res['magnitude_path']}")
+        print(f"  [BILD] Sparad overlay:    {res['output_path']}")
 
     print("\n" + "=" * 75)
     print("  KLART! Alla resultat finns i: data/test_output/package_detection/")
