@@ -105,12 +105,12 @@ def main():
 
     # 2. Starta riggen och ta en bild med full IR-belysning
     print("\n[2/4] Startar VisionRig och tar stereobild (all LEDs on)...")
-    with VisionRig(verbose=True) as rig:
+    with VisionRig(photo_exposure_us=45000, verbose=True) as rig:
         if not rig.is_connected:
             print("[FEL] Kunde inte ansluta till kameror och belysning.")
             return
 
-        pair = rig.capture_stereo(led_mode="all")
+        pair = rig.capture_stereo(exposure_us=45000,led_mode="all")
 
     if not pair.is_valid():
         print("[FEL] Misslyckades med att fånga ett giltigt stereobildpar.")
